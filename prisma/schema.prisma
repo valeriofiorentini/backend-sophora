@@ -1,0 +1,494 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  password       String?
+  name           String?
+  phone          String?
+  avatar         String?
+  country        String?
+  language       String    @default("en")
+  isVerified     Boolean   @default(false)
+  isSubscribed   Boolean   @default(false)
+  monthlyBudget  Float?
+  yearlyBudget   Float?
+  deviceToken    String?
+  fcmToken       String?   // Firebase Cloud Messaging token per push notification
+  googleId       String?   @unique
+  b2bDataSharing Boolean   @default(true) // GDPR opt-out: se false non contribuisce a PriceHistory B2B
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  otps              Otp[]
+  refreshTokens     RefreshToken[]
+  cart              CartItem[]
+  memberships       GroupMember[]
+  ownedGroups       Group[]          @relation("GroupOwner")
+  scannedProducts   ScannedProduct[]
+  feeds             Feed[]
+  favourites        Favourite[]
+  notifications     Notification[]
+  subscription      Subscription?
+  receipts          Receipt[]
+  chatSessions         ChatSession[]
+  nutritionProfile     NutritionProfile?
+  points               GamificationPoints[]
+  userLevel            UserLevel?
+  vouchers             Voucher[]
+  pointsTransactions   PointsTransaction[]
+  fineTuningSamples    FineTuningSample[]
+  pantryItems          PantryItem[]
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  userId    String
+  code      String
+  expiresAt DateTime
+  attempts  Int      @default(0)   // tentativi falliti — dopo MAX_ATTEMPTS il record viene eliminato
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Store {
+  id        String  @id @default(uuid())
+  name      String
+  address   String?
+  latitude  Float
+  longitude Float
+  chain     String?
+  image     String?
+  rating    Float?  @default(0)
+  createdAt DateTime @default(now())
+
+  products   Product[]
+  favourites Favourite[]
+}
+
+model Product {
+  id              String  @id @default(uuid())
+  barcode         String?
+  name            String
+  description     String?
+  image           String?
+  category        String?
+  storeId         String
+  price           Float
+  discountedPrice Float?
+  isOnSale        Boolean  @default(false)
+  saleEndsAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  store     Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  cartItems CartItem[]
+
+  @@index([barcode])
+  @@index([storeId])
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  userId    String
+  productId String
+  quantity  Int      @default(1)
+  addedAt   DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+}
+
+model Group {
+  id         String   @id @default(uuid())
+  name       String
+  budget     Float?
+  ownerId    String
+  inviteCode String?  @unique   // codice/link per invitare amici a unirsi
+  createdAt  DateTime @default(now())
+
+  owner           User             @relation("GroupOwner", fields: [ownerId], references: [id])
+  members         GroupMember[]
+  scannedProducts ScannedProduct[]
+  listItems       GroupListItem[]
+}
+
+// Lista della spesa condivisa di un gruppo: ogni membro può aggiungere,
+// spuntare ed eliminare voci. Le voci possono arrivare da 3 fonti:
+//   manual  → aggiunta a mano
+//   scan    → scansione barcode prodotto
+//   receipt → estratte da uno scontrino
+model GroupListItem {
+  id               String   @id @default(uuid())
+  groupId          String
+  name             String
+  quantity         Float    @default(1)
+  price            Float?
+  barcode          String?
+  source           String   @default("manual") // manual | scan | receipt
+  checked          Boolean  @default(false)    // spuntato/comprato
+  addedByUserId    String?                      // chi l'ha aggiunta
+  assignedMemberId String?                      // a chi è assegnata (divisione costi)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@index([groupId, checked])
+}
+
+model GroupMember {
+  id      String @id @default(uuid())
+  groupId String
+  userId  String?
+  name    String
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User? @relation(fields: [userId], references: [id])
+}
+
+model ScannedProduct {
+  id            String   @id @default(uuid())
+  userId        String
+  groupId       String?
+  groupMemberId String?
+  barcode       String?
+  name          String
+  price         Float
+  quantity      Int      @default(1)
+  storeId       String?
+  timestamp     DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group? @relation(fields: [groupId], references: [id])
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model Feed {
+  id            String   @id @default(uuid())
+  userId        String
+  type          String
+  description   String?
+  image         String?
+  storeName     String?
+  storeLocation String?
+  rating        Float?
+  isApproved    Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Favourite {
+  id      String @id @default(uuid())
+  userId  String
+  storeId String
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Subscription {
+  id                   String    @id @default(uuid())
+  userId               String    @unique
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  status               String    @default("inactive")
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Receipt {
+  id            String   @id @default(uuid())
+  userId        String
+  imageUrl      String?
+  storeName     String?
+  storeChain    String?
+  storeAddress  String?
+  receiptDate   DateTime?
+  // Decimal per precisione monetaria
+  totalAmount   Decimal? @db.Decimal(10, 2)
+  totalDiscount Decimal? @db.Decimal(10, 2)
+  paymentMethod String?
+  // status: pending | processing | processed | error
+  status        String   @default("pending")
+  processedAt   DateTime @default(now())
+
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items ReceiptItem[]
+
+  @@index([userId])
+  @@index([receiptDate])
+  @@index([storeChain])
+}
+
+model ReceiptItem {
+  id              String   @id @default(uuid())
+  receiptId       String
+  name            String
+  rawName         String
+  barcode         String?
+  quantity        Float    @default(1)
+  // Decimal(10,2) per precisione monetaria — evita floating point drift
+  unitPrice       Decimal  @db.Decimal(10, 2)
+  totalPrice      Decimal  @db.Decimal(10, 2)
+  discount        Decimal? @db.Decimal(10, 2)
+  discountPercent Float?
+  category        String?
+
+  receipt Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+
+  @@index([receiptId])
+  @@index([barcode])
+  @@index([name])
+}
+
+model PriceHistory {
+  id          String   @id @default(uuid())
+  productKey  String
+  storeChain  String
+  price       Decimal  @db.Decimal(10, 2)
+  isOnSale    Boolean  @default(false)
+  salePercent Float?
+  observedAt  DateTime @default(now())
+  source      String   @default("receipt_ocr")
+
+  // Indice composito per query forecast: productKey + storeChain + data
+  @@index([productKey, storeChain, observedAt])
+  @@index([observedAt])
+  // Indice per il solo productKey (ricerca senza filtro chain)
+  @@index([productKey])
+}
+
+model ChatSession {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  sessionId String
+  role      String
+  content   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+model NutritionProfile {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  dietType     String[] @default([])
+  dailyCalories Int?
+  dailyCarbs   Float?
+  dailyProtein Float?
+  dailyFat     Float?
+  allergens    String[] @default([])
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GamificationPoints {
+  id          String   @id @default(uuid())
+  userId      String
+  points      Int
+  action      String
+  referenceId String?
+  earnedAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Promo {
+  id          String   @id @default(uuid())
+  storeName   String
+  storeChain  String?
+  productName String
+  price       Float?
+  originalPrice Float?
+  discount    String?
+  imageUrl    String?
+  source      String   @default("user")
+  validFrom   DateTime @default(now())
+  validUntil  DateTime
+  latitude    Float?
+  longitude   Float?
+  createdAt   DateTime @default(now())
+
+  @@index([storeChain])
+  @@index([validUntil])
+}
+
+// ─── V4 Gamification ──────────────────────────────────────────────────────────
+
+model UserLevel {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  level         String   @default("bronze")   // bronze | silver | gold | platinum
+  totalPoints   Int      @default(0)
+  currentStreak Int      @default(0)          // giorni consecutivi di attività
+  longestStreak Int      @default(0)
+  lastActivityAt DateTime?
+  updatedAt     DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vouchers Voucher[]
+
+  @@index([userId])
+  @@index([level])
+  // Indice per la query leaderboard (ORDER BY totalPoints DESC)
+  @@index([totalPoints(sort: Desc)])
+}
+
+model Voucher {
+  id          String    @id @default(uuid())
+  userId      String
+  userLevelId String?
+  code        String    @unique
+  // type: percent_discount | fixed_discount | free_product | cashback
+  type        String
+  value       Decimal   @db.Decimal(10, 2)  // es: 10.00 = 10% oppure 0.50 = €0.50
+  description String
+  storeChain  String?   // null = valido ovunque
+  pointsCost  Int       // punti necessari per riscattare
+  expiresAt   DateTime
+  redeemedAt  DateTime?
+  usedAt      DateTime?
+  // status: available | redeemed | used | expired
+  // NB: i voucher creati da purchaseVoucher partono da 'redeemed' (già acquistati)
+  status      String    @default("available")
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userLevel UserLevel? @relation(fields: [userLevelId], references: [id])
+
+  @@index([userId])
+  @@index([code])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model PointsTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  delta       Int
+  action      String
+  referenceId String?
+  balance     Int
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// ─── V5 Fine-tuning ───────────────────────────────────────────────────────────
+
+model FineTuningSample {
+  id            String   @id @default(uuid())
+  receiptId     String
+  userId        String
+  imageUrl      String
+  correctedJson String   // JSON validato dall'utente
+  // status: validated | used_in_training
+  status        String   @default("validated")
+  createdAt     DateTime @default(now())
+
+  // Relazione esplicita con User per cascade delete
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([userId])
+}
+
+// ─── Dispensa (Pantry Scanner) ───────────────────────────────────────────────
+model PantryItem {
+  id        String    @id @default(uuid())
+  userId    String
+  name      String
+  category  String?   // latticini | verdure | frutta | carne | pesce | pasta | condimenti | altro
+  quantity  Float     @default(1)
+  unit      String?   // kg | g | l | ml | pz | conf
+  barcode   String?
+  expiresAt DateTime?
+  notes     String?
+  inStock   Boolean   @default(true)  // false = prodotto finito/consumato
+  source    String?                   // 'receipt' | 'scan' | 'manual'
+  addedAt   DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Un prodotto con lo stesso nome non può comparire due volte per lo stesso
+  // utente: backstop anti-duplicati (il dedup applicativo è case-insensitive).
+  // Abilita anche skipDuplicates nei createMany batch dalla sync scontrini.
+  @@unique([userId, name])
+  @@index([userId, inStock])
+  @@index([userId, expiresAt])
+}
+
+model FineTuningJob {
+  id              String    @id @default(uuid())
+  openaiJobId     String    @unique
+  openaiFileId    String
+  model           String    @default("gpt-4o-mini")
+  status          String    // validating_files | queued | running | succeeded | failed
+  samplesCount    Int
+  fineTunedModel  String?   // es: ft:gpt-4o-mini:easymarket-receipt-ocr:xxxxx
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+}

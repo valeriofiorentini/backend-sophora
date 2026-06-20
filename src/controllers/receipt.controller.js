@@ -126,14 +126,9 @@ async function scanReceipt(req, res) {
     return error(res, `Formato immagine non supportato: ${req.file.mimetype}. Usa JPEG, PNG o WEBP.`);
   }
 
-  // 1. Upload S3 — fuori dalla transaction (non rollbackabile)
-  let imageUrl;
-  try {
-    imageUrl = await uploadToS3(req.file, 'receipts');
-  } catch (uploadErr) {
-    console.error('[receipt] S3 upload error:', uploadErr.message);
-    return error(res, 'Errore caricamento immagine', 500);
-  }
+  // 1. Converti immagine in base64 (no S3 richiesto per testing)
+  const imageBase64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+  const imageUrl = null; // nessun storage esterno
 
   // 2. Crea record "processing" per feedback immediato all'utente
   let receipt;
@@ -157,7 +152,7 @@ async function scanReceipt(req, res) {
       role: 'user',
       content: [
         { type: 'text',      text: RECEIPT_PROMPT },
-        { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+        { type: 'image_url', image_url: { url: imageBase64, detail: 'high' } },
       ],
     }];
 

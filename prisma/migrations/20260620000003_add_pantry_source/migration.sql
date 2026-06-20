@@ -1,0 +1,1 @@
+ALTER TABLE "PantryItem" ADD COLUMN IF NOT EXISTS "source" TEXT;

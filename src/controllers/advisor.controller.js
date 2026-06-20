@@ -436,14 +436,14 @@ async function getAssociations(req, res) {
   const userId = req.userId;
   const since  = new Date(Date.now() - BASKET_WINDOW_DAYS * 24 * 3600 * 1000);
 
-  // 1. Prodotti ricorrenti dell'utente (stessa logica del basket)
+  // 1. Prodotti ricorrenti dell'utente — usa name normalizzato come chiave
   const userItems = await prisma.receiptItem.findMany({
-    where: { receipt: { userId, date: { gte: since } } },
-    select: { productKey: true, name: true },
+    where: { receipt: { userId, receiptDate: { gte: since } } },
+    select: { name: true },
   });
 
   const userKeys = [...new Set(
-    userItems.map(i => i.productKey).filter(Boolean),
+    userItems.map(i => i.name?.toLowerCase().trim()).filter(Boolean),
   )];
 
   if (!userKeys.length) {
@@ -453,17 +453,17 @@ async function getAssociations(req, res) {
     });
   }
 
-  // 2. Scontrini (di qualunque utente) che contengono prodotti dell'utente
+  // 2. Scontrini che contengono prodotti dell'utente
   const seedRows = await prisma.receiptItem.findMany({
-    where: { productKey: { in: userKeys } },
-    select: { receiptId: true, productKey: true },
+    where: { name: { in: userKeys.map(k => k), mode: 'insensitive' } },
+    select: { receiptId: true, name: true },
   });
 
-  // seed → set di receiptId
   const seedToReceipts = {};
-  for (const { receiptId, productKey } of seedRows) {
-    if (!seedToReceipts[productKey]) seedToReceipts[productKey] = new Set();
-    seedToReceipts[productKey].add(receiptId);
+  for (const { receiptId, name } of seedRows) {
+    const key = name.toLowerCase().trim();
+    if (!seedToReceipts[key]) seedToReceipts[key] = new Set();
+    seedToReceipts[key].add(receiptId);
   }
 
   const receiptIds = [...new Set(seedRows.map(r => r.receiptId))];
@@ -471,20 +471,18 @@ async function getAssociations(req, res) {
     return success(res, { associations: [], message: 'Dati insufficienti per generare suggerimenti.' });
   }
 
-  // 3. Prodotti co-presenti su quegli scontrini (esclusi quelli già acquistati dall'utente)
+  // 3. Prodotti co-presenti su quegli scontrini
   const coRows = await prisma.receiptItem.findMany({
-    where: {
-      receiptId: { in: receiptIds },
-      productKey: { notIn: userKeys, not: null },
-    },
-    select: { receiptId: true, productKey: true, name: true },
+    where: { receiptId: { in: receiptIds } },
+    select: { receiptId: true, name: true },
   });
 
-  // 4. Calcola confidence per ogni (seed, target)
-  const pairCount  = {}; // `seed||target` → count
-  const targetName = {}; // productKey → nome più recente
+  const pairCount  = {};
+  const targetName = {};
 
-  for (const { receiptId, productKey: target, name } of coRows) {
+  for (const { receiptId, name } of coRows) {
+    const target = name.toLowerCase().trim();
+    if (userKeys.includes(target)) continue;
     targetName[target] = name;
     for (const [seed, receipts] of Object.entries(seedToReceipts)) {
       if (receipts.has(receiptId)) {
@@ -494,7 +492,6 @@ async function getAssociations(req, res) {
     }
   }
 
-  // 5. Per ogni target, tieni solo la confidence migliore (seed più forte)
   const best = {};
   for (const [key, count] of Object.entries(pairCount)) {
     const [seed, target] = key.split('||');
@@ -509,10 +506,10 @@ async function getAssociations(req, res) {
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 12)
     .map(a => ({
-      productKey:  a.target,
-      name:        a.name,
-      confidence:  Math.round(a.confidence * 100),
-      count:       a.count,
+      productKey:    a.target,
+      name:          a.name,
+      confidence:    Math.round(a.confidence * 100),
+      count:         a.count,
       becauseYouBuy: a.seed,
     }));
 

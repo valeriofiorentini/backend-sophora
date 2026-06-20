@@ -433,7 +433,7 @@ async function getHealthAdvice(req, res) {
  * con pochi dati.
  */
 async function getAssociations(req, res) {
-  const userId = req.user.id;
+  const userId = req.userId;
   const since  = new Date(Date.now() - BASKET_WINDOW_DAYS * 24 * 3600 * 1000);
 
   // 1. Prodotti ricorrenti dell'utente (stessa logica del basket)

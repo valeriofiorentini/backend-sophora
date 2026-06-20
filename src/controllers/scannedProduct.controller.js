@@ -38,7 +38,13 @@ async function getByTimestamp(req, res) {
   } else {
     startDate = new Date(timeStamp);
     endDate = new Date(timeStamp);
-    endDate.setHours(23, 59, 59);
+    if (isNaN(startDate.getTime())) {
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      endDate   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    } else {
+      endDate.setHours(23, 59, 59);
+    }
   }
 
   const where = {

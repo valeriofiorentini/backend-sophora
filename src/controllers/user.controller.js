@@ -43,7 +43,7 @@ function validateEmail(email) {
 const SUPPORTED_LANGS = new Set(['it', 'en', 'fr', 'es', 'de']);
 
 async function signup(req, res) {
-  const { name, phone, country } = req.body;
+  const { name, surname, username, phone, country } = req.body;
   const email    = req.body.email?.trim().toLowerCase();
   const password = req.body.password;
   // Lingua dell'app al momento della registrazione — determina la lingua
@@ -67,7 +67,7 @@ async function signup(req, res) {
     const langUpdate = SUPPORTED_LANGS.has(req.body.language) ? { language: req.body.language } : {};
     const updated = await prisma.user.update({
       where: { id: existing.id },
-      data:  { password: hashed, name, phone, country, ...langUpdate },
+      data:  { password: hashed, name, surname, username: username || undefined, phone, country, ...langUpdate },
     });
     const otp = await createOtp(existing.id);
     console.log(`[DEV] OTP per ${email} (ri-registrazione): ${otp}`);
@@ -82,7 +82,7 @@ async function signup(req, res) {
 
   const hashed = await bcrypt.hash(password, 12); // 12 rounds (era 10)
   const user   = await prisma.user.create({
-    data: { email, password: hashed, name, phone, country, language },
+    data: { email, password: hashed, name, surname, username: username || undefined, phone, country, language },
   });
 
   const otp = await createOtp(user.id);

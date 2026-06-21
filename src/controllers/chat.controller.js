@@ -201,4 +201,72 @@ async function deleteSession(req, res) {
   return success(res, { message: 'Sessione eliminata' });
 }
 
-module.exports = { createSession, getSessions, getMessages, sendMessage, deleteSession };
+// Non-streaming version for React Native (fetch non supporta ReadableStream)
+async function sendMessageSync(req, res) {
+  const { message, sessionId: incomingSessionId } = req.body;
+  if (!message?.trim()) return error(res, 'Messaggio obbligatorio');
+
+  let session;
+  if (incomingSessionId) {
+    session = await prisma.chatSession.findUnique({ where: { id: incomingSessionId } });
+    if (!session || session.userId !== req.userId) return error(res, 'Sessione non trovata', 404);
+  } else {
+    session = await prisma.chatSession.create({
+      data: { userId: req.userId, title: message.slice(0, 60) },
+    });
+  }
+
+  await prisma.chatMessage.create({ data: { sessionId: session.id, role: 'user', content: message } });
+
+  const history = await prisma.chatMessage.findMany({
+    where: { sessionId: session.id },
+    orderBy: { createdAt: 'asc' },
+    take: 20,
+  });
+
+  const userProfile = await prisma.user.findUnique({
+    where: { id: req.userId },
+    select: { name: true, monthlyBudget: true, nutritionProfile: true, language: true },
+  });
+
+  let contextAddendum = langInstruction(userProfile?.language);
+  if (userProfile?.monthlyBudget) contextAddendum += `\nBudget mensile: €${userProfile.monthlyBudget}.`;
+  if (userProfile?.nutritionProfile?.dietType?.length > 0)
+    contextAddendum += `\nDieta: ${userProfile.nutritionProfile.dietType.join(', ')}.`;
+
+  const anthropicMessages = history.map(m => ({
+    role: m.role === 'user' ? 'user' : 'assistant',
+    content: m.content,
+  }));
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: CHAT_MODEL,
+      max_tokens: 1024,
+      stream: false,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT + contextAddendum },
+        ...anthropicMessages,
+      ],
+    });
+
+    const fullResponse = response.choices[0]?.message?.content || '';
+
+    let metadata = null;
+    const listMatch = fullResponse.match(/<shopping_list>([\s\S]*?)<\/shopping_list>/);
+    if (listMatch) { try { metadata = JSON.parse(listMatch[1]); } catch {} }
+
+    const assistantMsg = await prisma.chatMessage.create({
+      data: { sessionId: session.id, role: 'assistant', content: fullResponse, metadata },
+    });
+
+    await prisma.chatSession.update({ where: { id: session.id }, data: { updatedAt: new Date() } });
+
+    return success(res, { text: fullResponse, sessionId: session.id, messageId: assistantMsg.id, metadata });
+  } catch (err) {
+    console.error('Claude API error:', err);
+    return error(res, 'Errore AI', 500);
+  }
+}
+
+module.exports = { createSession, getSessions, getMessages, sendMessage, sendMessageSync, deleteSession };

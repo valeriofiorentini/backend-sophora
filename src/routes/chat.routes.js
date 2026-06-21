@@ -8,7 +8,8 @@ router.post('/sessions', c.createSession);
 router.get('/sessions', c.getSessions);
 router.get('/sessions/:sessionId/messages', c.getMessages);
 router.post('/sessions/:sessionId/message', chatRateLimit, c.sendMessage);
-router.post('/message', chatRateLimit, c.sendMessage); // crea sessione automaticamente
+router.post('/message', chatRateLimit, c.sendMessage);
+router.post('/message-sync', chatRateLimit, c.sendMessageSync);
 router.delete('/sessions/:sessionId', c.deleteSession);
 
 module.exports = router;

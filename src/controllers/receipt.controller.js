@@ -68,6 +68,26 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 0. COLONNE SCONTRINO: Lo scontrino italiano ha tipicamente 3 colonne: DESCRIZIONE | IVA% | Prezzo(€). La colonna IVA contiene percentuali come "4,00%", "10,00%", "22,00%" — NON sono prezzi! Il prezzo è SEMPRE l'ultimo numero sulla riga, nella colonna Prezzo(€). Non confondere mai la percentuale IVA con il prezzo del prodotto.
 
+   ESEMPIO CRITICO — scontrino PIM/Coop/Conad con colonne:
+   "BRAVO C.IGIENICA X6   22,00%   2,49"
+   → IVA = 22,00% (ignora), Prezzo = 2,49 € ✓  (NON 22,00 €!)
+   "C.STRACCHINOI 165G    4,00%    1,89"
+   → IVA = 4,00% (ignora), Prezzo = 1,89 € ✓  (NON 4,00 €!)
+
+   REGOLA ANTI-CONFUSIONE: se il "prezzo" che stai per scrivere è uguale a 4, 10 o 22 (con o senza decimali), FERMATI e rileggi la riga — stai quasi certamente leggendo la colonna IVA invece del prezzo reale. Cerca l'ultimo numero sulla riga che NON sia seguito da "%" — quello è il prezzo.
+
+   NOTA: alcuni scontrini (es. PIM) hanno un trattino "-" dopo il prezzo (es. "2,49-"). Il trattino indica che l'IVA è inclusa nel prezzo — ignoralo, il prezzo è 2,49.
+
+   ESEMPIO CRITICO — scontrino PIM/Coop/Conad con colonne:
+   "BRAVO C.IGIENICA X6   22,00%   2,49"
+   → IVA = 22,00% (ignora), Prezzo = 2,49 € ✓  (NON 22,00 €!)
+   "C.STRACCHINOI 165G    4,00%    1,89"
+   → IVA = 4,00% (ignora), Prezzo = 1,89 € ✓  (NON 4,00 €!)
+
+   REGOLA ANTI-CONFUSIONE: se il "prezzo" che stai per scrivere è uguale a 4, 10 o 22 (con o senza decimali), FERMATI e rileggi la riga — stai quasi certamente leggendo la colonna IVA invece del prezzo reale. Cerca l'ultimo numero sulla riga che NON sia seguito da "%" — quello è il prezzo.
+
+   NOTA: alcuni scontrini (es. PIM) hanno un trattino "-" dopo il prezzo (es. "2,49-"). Il trattino indica che l'IVA è inclusa nel prezzo — ignoralo, il prezzo è 2,49.
+
 1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic." ecc., quella riga è lo sconto del prodotto precedente. Mettila nel campo "discount" di quel prodotto con valore positivo (es. 0.50, non -0.50), NON come prodotto separato.
 
 2. PRODOTTI DUPLICATI: Se lo stesso prodotto appare N volte (righe identiche), crea UN SOLO oggetto con "quantity": N e calcola unitPrice e totalPrice di conseguenza.

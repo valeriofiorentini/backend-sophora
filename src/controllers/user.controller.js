@@ -201,15 +201,28 @@ async function googleAuth(req, res) {
     where: { OR: [{ googleId }, { email }] },
   });
 
+  // Deriva username dall'email (parte prima di @), univoco
+  const baseUsername = email.split('@')[0].replace(/[^a-z0-9_]/gi, '').toLowerCase();
+
   if (!user) {
     // Nuovo utente: email già verificata da Google, niente OTP
+    // username univoco: prova baseUsername, poi aggiunge suffisso numerico
+    let username = baseUsername;
+    let suffix = 1;
+    while (await prisma.user.findUnique({ where: { username } })) {
+      username = `${baseUsername}${suffix++}`;
+    }
+    const nameParts = (payload.name ?? '').split(' ');
     user = await prisma.user.create({
       data: {
         email,
         googleId,
-        name:       payload.name    ?? null,
-        avatar:     payload.picture ?? null,
-        isVerified: true,
+        name:               nameParts[0] ?? null,
+        surname:            nameParts.slice(1).join(' ') || null,
+        username,
+        avatar:             payload.picture ?? null,
+        isVerified:         true,
+        isProfileCompleted: true,
       },
     });
   } else if (!user.googleId) {
@@ -218,10 +231,19 @@ async function googleAuth(req, res) {
       where: { id: user.id },
       data:  {
         googleId,
-        isVerified: true,
+        isVerified:         true,
+        isProfileCompleted: true,
         avatar: user.avatar ?? payload.picture ?? null,
       },
     });
+  } else {
+    // Utente già collegato: assicura isProfileCompleted
+    if (!user.isProfileCompleted) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data:  { isProfileCompleted: true },
+      });
+    }
   }
 
   const accessToken  = generateAccessToken(user.id);
@@ -248,7 +270,7 @@ async function verifyOtpHandler(req, res) {
   // (l'oggetto `user` letto prima avrebbe ancora isVerified=false)
   const updatedUser = await prisma.user.update({
     where: { id: user.id },
-    data:  { isVerified: true },
+    data:  { isVerified: true, isProfileCompleted: true },
   });
 
   const accessToken  = generateAccessToken(user.id);

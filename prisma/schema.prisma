@@ -18,8 +18,9 @@ model User {
   avatar         String?
   country        String?
   language       String    @default("en")
-  isVerified     Boolean   @default(false)
-  isSubscribed   Boolean   @default(false)
+  isVerified          Boolean   @default(false)
+  isSubscribed        Boolean   @default(false)
+  isProfileCompleted  Boolean   @default(false)
   monthlyBudget  Float?
   yearlyBudget   Float?
   deviceToken    String?

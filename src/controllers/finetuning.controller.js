@@ -39,36 +39,59 @@ async function submitCorrection(req, res) {
 
   const receipt = await prisma.receipt.findUnique({ where: { id: receiptId }, include: { items: true } });
   if (!receipt || receipt.userId !== req.userId) return error(res, 'Scontrino non trovato', 404);
-  if (!receipt.imageUrl) return error(res, 'Scontrino senza immagine, non utilizzabile per training', 422);
 
-  // Salva la correzione come training sample
-  const sample = await prisma.fineTuningSample.create({
-    data: {
-      receiptId,
-      userId: req.userId,
-      imageUrl: receipt.imageUrl,
-      correctedJson: JSON.stringify({
-        storeName: correctedStoreName || receipt.storeName,
-        storeChain: correctedStoreChain || receipt.storeChain,
-        storeAddress: receipt.storeAddress,
-        receiptDate: receipt.receiptDate?.toISOString().split('T')[0] || null,
-        totalAmount: correctedTotal || receipt.totalAmount,
-        totalDiscount: receipt.totalDiscount,
-        items: correctedItems || receipt.items.map(i => ({
-          name: i.name,
-          rawName: i.rawName,
-          quantity: i.quantity,
-          unitPrice: i.unitPrice,
-          totalPrice: i.totalPrice,
-          discount: i.discount,
-          discountPercent: i.discountPercent,
-        })),
-      }),
-      status: 'validated',
-    },
-  });
+  // Aggiorna i dati reali del Receipt se ci sono correzioni
+  const ops = [];
+  if (correctedItems && Array.isArray(correctedItems)) {
+    // Cancella gli item vecchi e ricreali corretti
+    ops.push(prisma.receiptItem.deleteMany({ where: { receiptId } }));
+    ops.push(prisma.receiptItem.createMany({
+      data: correctedItems.map(item => ({
+        receiptId,
+        name: item.name || 'Prodotto',
+        rawName: item.rawName || item.name || '',
+        barcode: item.barcode ?? null,
+        quantity: item.quantity || 1,
+        unitPrice: parseFloat(item.unitPrice) || parseFloat(item.totalPrice) || 0,
+        totalPrice: parseFloat(item.totalPrice) || 0,
+        discount: item.discount ? parseFloat(item.discount) : null,
+        discountPercent: item.discountPercent ? parseFloat(item.discountPercent) : null,
+        category: item.category || null,
+      })),
+    }));
+    if (correctedTotal) {
+      ops.push(prisma.receipt.update({ where: { id: receiptId }, data: { totalAmount: correctedTotal } }));
+    }
+  }
+  if (ops.length > 0) await prisma.$transaction(ops);
 
-  return success(res, { sample: { id: sample.id, status: sample.status } }, 201);
+  // Salva come training sample SOLO se c'è un'immagine (per fine-tuning futuro)
+  let sample = null;
+  if (receipt.imageUrl && req.body.consent === true) {
+    sample = await prisma.fineTuningSample.create({
+      data: {
+        receiptId,
+        userId: req.userId,
+        imageUrl: receipt.imageUrl,
+        correctedJson: JSON.stringify({
+          storeName: correctedStoreName || receipt.storeName,
+          storeChain: correctedStoreChain || receipt.storeChain,
+          storeAddress: receipt.storeAddress,
+          receiptDate: receipt.receiptDate?.toISOString().split('T')[0] || null,
+          totalAmount: correctedTotal || receipt.totalAmount,
+          totalDiscount: receipt.totalDiscount,
+          items: correctedItems || receipt.items.map(i => ({
+            name: i.name, rawName: i.rawName, quantity: i.quantity,
+            unitPrice: i.unitPrice, totalPrice: i.totalPrice,
+            discount: i.discount, discountPercent: i.discountPercent,
+          })),
+        }),
+        status: 'validated',
+      },
+    });
+  }
+
+  return success(res, { corrected: true, sample: sample ? { id: sample.id } : null }, 200);
 }
 
 // ─── GET /api/finetuning/stats ─────────────────────────────────────────────────

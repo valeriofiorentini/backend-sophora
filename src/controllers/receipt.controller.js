@@ -66,29 +66,29 @@ const RECEIPT_PROMPT = `Sei un esperto di scontrini italiani. Analizza l'immagin
 
 REGOLE CRITICHE — seguile nell'ordine:
 
-1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "Sconto artic." ecc., quella riga è lo sconto del prodotto precedente. Mettila nel campo "discount" di quel prodotto con valore positivo (es. 1.26, non -1.26), NON come prodotto separato.
+0. COLONNE SCONTRINO: Lo scontrino italiano ha tipicamente 3 colonne: DESCRIZIONE | IVA% | Prezzo(€). La colonna IVA contiene percentuali come "4,00%", "10,00%", "22,00%" — NON sono prezzi! Il prezzo è SEMPRE l'ultimo numero sulla riga, nella colonna Prezzo(€). Non confondere mai la percentuale IVA con il prezzo del prodotto.
+
+1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic." ecc., quella riga è lo sconto del prodotto precedente. Mettila nel campo "discount" di quel prodotto con valore positivo (es. 0.50, non -0.50), NON come prodotto separato.
 
 2. PRODOTTI DUPLICATI: Se lo stesso prodotto appare N volte (righe identiche), crea UN SOLO oggetto con "quantity": N e calcola unitPrice e totalPrice di conseguenza.
 
 3. TOTALE REALE: Il campo "totalAmount" deve essere il totale pagato in denaro (voce "TOTALE COMPLESSIVO" o "IMPORTO EURO"). Ignora BUONI PASTO, BUONI SCONTO, PUNTI FEDELTÀ — non sono pagamenti reali.
 
-4. NOMI ABBREVIATI: Espandi le abbreviazioni comuni degli scontrini italiani:
-   - Generiche: LENT. → Lenticchie, POMOD. → Pomodori, BIO → biologico, NS → Nostra Spesa
-   - Misure: G400 → 400g, KG 1,5 → 1,5 kg, X18 → confezione da 18, 24FET → 24 fette, GX2 → confezione doppia
-   - Codici IVA: P/B/C/D/T dopo il prezzo = codice IVA, ignorali completamente
-   - PAM / Pam Panorama: MB → Marca Bene (es. "MB BISC.PAN DI STE" → "Biscotti Pan di Stelle Marca Bene")
-   - PAM: T.ARCA → Terra d'Aromi (es. "T.ARCA TAGLIATELLE" → "Tagliatelle Terra d'Aromi")
-   - PAM: PAM FROL. → Biscotti frollini PAM, PAM BASTONCINI → Bastoncini di pesce PAM
-   - PAM: SFOGLIAVELO → Sfogliavelo (pasta fresca), PANCARRE → Pancarrè
-   - PAM: SOTTILISSIME GROS → Sottilissime Grosbusch (affettati), ROBERTO G.PIADA → Piadina Roberto Giusti
-   - PAM: PESTO FRESCO PINOL → Pesto fresco al basilico con pinoli, PESTO FRESCO NOCI → Pesto fresco alle noci
-   - PAM: T.ARCA SALMONE NOR → Salmone norvegese Terra d'Aromi, PR.CRUDO STAG → Prosciutto crudo stagionato
-   - PAM: BIRRA ANNIVERSARIO → Birra Anniversario PAM, YOG MAGRO BIA → Yogurt magro bianco
-   - Esselunga: NS → Nostra Spesa (marca), ALTU. → Altunità, VVERDEB → Verdi biologici
-   - Conad: PREC → preconfezionato, FF → Fondo Franchigia
-   - Generiche: IT → italiano, GX2 → confezione doppia
+4. NOMI PRODOTTI: Mantieni il nome il più completo e fedele possibile allo scontrino. Espandi le abbreviazioni ma non perdere informazioni importanti:
+   - C.N.FIL → Conserva/Filetti (es. C.N.FIL.MELANZANE → "Filetti di Melanzane sottoolio")
+   - C.S/S → Condimento/Salsa (C.S/S INS.RUSSA → "Insalata Russa")
+   - INS. → Insalata, C.IGIENICA → Carta Igienica, C.STRACCHINO / C.STRACCHINOI → Stracchino
+   - CALVE' / CALVÉ → Calvé, BRAVO → Bravo
+   - Misure: 165G → 165g, 200G → 200g, X6 → conf. da 6
+   - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi
+   - Esselunga: NS → Nostra Spesa
+   - GX2 → confezione doppia
 
-5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio, shopper/borse.
+4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto (es. POLLO ARROSTO) sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome (es. "Gastronomia: Pollo Arrosto").
+
+5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio, shopper/borse. NON escludere MAI prodotti alimentari o prodotti per la casa — includi assolutamente TUTTI i prodotti con un prezzo.
+
+5b. NESSUN PRODOTTO SALTATO: Conta le righe prodotto sullo scontrino e verifica che l'array "items" abbia lo stesso numero di elementi. Se una riga ha un prezzo valido e non è un subtotale/IVA, deve essere inclusa.
 
 6. FOTO SFOCATA O PARZIALE: Se un valore non è leggibile usa null. Non inventare prezzi.
 
@@ -97,7 +97,7 @@ REGOLE CRITICHE — seguile nell'ordine:
 Struttura JSON da restituire:
 {
   "storeName": "nome negozio completo o null",
-  "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros o null",
+  "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros, Pim o null",
   "storeAddress": "indirizzo completo o null",
   "receiptDate": "YYYY-MM-DD o null",
   "items": [

@@ -48,7 +48,7 @@ const productTemplates = [
   { name: 'Acqua Naturale 1.5L', barcode: '8001234567893', price: 0.29, category: 'Bevande', isOnSale: false },
 ];
 
-const PER_CITY = 6; // negozi per citta (52 citta x 6 = ~312)
+const PER_CITY = 18; // negozi per citta (52 citta x 18 = ~936)
 const jitter = (n) => (Math.random() - 0.5) * n;
 const slug = (s) => `seed-${s.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
 

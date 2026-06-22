@@ -101,7 +101,9 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto (es. POLLO ARROSTO) sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome (es. "Gastronomia: Pollo Arrosto").
 
-5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio, shopper/borse. NON escludere MAI prodotti alimentari o prodotti per la casa — includi assolutamente TUTTI i prodotti con un prezzo.
+5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio.
+   ESCLUDI SEMPRE shopper e sacchetti: "BIO SACC.", "SACC. OF", "SHOPPER", "BORSA", "SACCHETTO BIOD", "BUSTA" — sono imballaggi, non prodotti. Tipicamente costano €0,01-€0,50 e hanno IVA 22%.
+   NON escludere MAI prodotti alimentari o prodotti per la casa — includi assolutamente TUTTI i prodotti con un prezzo.
 
 5b. NESSUN PRODOTTO SALTATO: Conta le righe prodotto sullo scontrino e verifica che l'array "items" abbia lo stesso numero di elementi. Se una riga ha un prezzo valido e non è un subtotale/IVA, deve essere inclusa.
 

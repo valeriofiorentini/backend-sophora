@@ -2,8 +2,22 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function main() {
-  // Seed sample stores in Milan
+  // Negozi di esempio — Tivoli, Roma e Milano
   const stores = [
+    // --- Tivoli e dintorni (dove testa l'utente) ---
+    { name: 'Conad Tivoli', address: 'Via Tiburtina Valeria 100, Tivoli', latitude: 41.9610, longitude: 12.7990, chain: 'Conad', rating: 4.1 },
+    { name: 'Pam Tivoli', address: 'Viale Mazzini 30, Tivoli', latitude: 41.9580, longitude: 12.7920, chain: 'Pam', rating: 3.8 },
+    { name: 'Eurospin Tivoli', address: 'Via Empolitana 25, Tivoli', latitude: 41.9550, longitude: 12.8050, chain: 'Eurospin', rating: 3.9 },
+    { name: 'Lidl Tivoli', address: 'Via Maremmana Inferiore 12, Tivoli', latitude: 41.9700, longitude: 12.7850, chain: 'Lidl', rating: 4.0 },
+    { name: 'Carrefour Market Tivoli', address: 'Via Acquaregna 50, Tivoli', latitude: 41.9630, longitude: 12.8010, chain: 'Carrefour', rating: 3.7 },
+    { name: 'Todis Villa Adriana', address: 'Via di Villa Adriana 180, Tivoli', latitude: 41.9420, longitude: 12.7750, chain: 'Todis', rating: 3.6 },
+    // --- Roma ---
+    { name: 'Esselunga Roma Tiburtina', address: 'Via Tiburtina 1000, Roma', latitude: 41.9100, longitude: 12.5300, chain: 'Esselunga', rating: 4.3 },
+    { name: 'Carrefour Express Termini', address: 'Via Giolitti 40, Roma', latitude: 41.9010, longitude: 12.5020, chain: 'Carrefour', rating: 3.8 },
+    { name: 'Conad City Roma Centro', address: 'Via Nazionale 200, Roma', latitude: 41.8980, longitude: 12.4920, chain: 'Conad', rating: 4.0 },
+    { name: 'Lidl Roma San Lorenzo', address: 'Via dei Reti 30, Roma', latitude: 41.9000, longitude: 12.5180, chain: 'Lidl', rating: 4.1 },
+    { name: 'Pam Roma Prati', address: 'Via Cola di Rienzo 100, Roma', latitude: 41.9090, longitude: 12.4640, chain: 'Pam', rating: 3.9 },
+    // --- Milano ---
     { name: 'Esselunga Porta Vittoria', address: 'Via Vallazze 6, Milano', latitude: 45.464, longitude: 9.221, chain: 'Esselunga', rating: 4.2 },
     { name: 'Carrefour Market Loreto', address: 'Viale Monza 1, Milano', latitude: 45.488, longitude: 9.213, chain: 'Carrefour', rating: 3.9 },
     { name: 'Lidl Milano Piola', address: 'Via Ventura 5, Milano', latitude: 45.478, longitude: 9.226, chain: 'Lidl', rating: 4.0 },

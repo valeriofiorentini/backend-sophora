@@ -121,6 +121,7 @@ async function getBasketAdvice(req, res) {
     where: {
       productKey: { in: basket.map(b => b.productKey) },
       observedAt: { gte: since },
+      storeChain: { not: null },
     },
     select: { productKey: true, storeChain: true, price: true },
   });
@@ -175,7 +176,7 @@ async function getBasketAdvice(req, res) {
   const best = chains.find(ch => ch.estimatedSaving > 0);
   const message = best
     ? `Facendo la spesa da ${best.chain} risparmieresti circa €${best.estimatedSaving.toFixed(2)} ` +
-      `sui ${best.coveredProducts} prodotti confrontabili della tua spesa tipo (${BASKET_WINDOW_DAYS} giorni).`
+      `sui ${best.coveredProducts} prodotti confrontabili della tua spesa tipo (totale ultimi ${BASKET_WINDOW_DAYS} giorni).`
     : 'Stai già facendo la spesa nelle catene più convenienti per i tuoi prodotti, ' +
       'oppure non ci sono ancora abbastanza dati di confronto.';
 

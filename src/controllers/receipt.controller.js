@@ -90,13 +90,26 @@ REGOLE CRITICHE — seguile nell'ordine:
    - INS. → Insalata, C.IGIENICA → Carta Igienica, C.STRACCHINO / C.STRACCHINOI → Stracchino
    - CALVE' / CALVÉ → Calvé, BRAVO → Bravo
    - Misure: 165G → 165g, 200G → 200g, X6 → conf. da 6, X18 → conf. da 18, X10 → conf. da 10
-   - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi, FROL. → Frollini, CAC → Cacao, BASTONCINI → Bastoncini, SFOGLIAVELO → Sfogliatelle Velo, BIO-POM.DATTER → Bio Pomodori Datterini, SOTTILISSIME → Sottilissime, GROS → Grossa, CHAMP. → Champignon, AFFET → Affettati, PANCARRE → Pancarré, PIADA → Piadina, PR.CRUDO → Prosciutto Crudo, STAG → Stagionato, PANINI → Panini, HAMBURG → Hamburger, BOVI → Bovino, BIANCA SFOGLIA → Pasta Sfoglia Bianca, YOG → Yogurt, MAGRO BIAN → Magro Bianco, UOVA MEDIE → Uova Medie, BAGUETTE RU → Baguette Rustica
+   - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi, FROL. → Frollini, CAC → Cacao, BASTONCINI → Bastoncini, SFOGLIAVELO → Sfogliatelle Velo, BIO-POM.DATTER → Bio Pomodori Datterini, SOTTILISSIME → Sottilissime, GROS → Grossa, CHAMP. → Champignon, AFFET → Affettati, PANCARRE → Pancarré, PIADA → Piadina, PR.CRUDO → Prosciutto Crudo, STAG → Stagionato, PANINI → Panini, HAMBURG → Hamburger, BOVI → Bovino, BIANCA SFOGLIA → Pasta Sfoglia Bianca, YOG → Yogurt, MAGRO BIAN → Magro Bianco, UOVA MEDIE → Uova Medie, BAGUETTE RU → Baguette Rustica, G.PADANO GRATT → Grana Padano Grattugiato, FILETTO DI MER → Filetto di Merluzzo, PETTO FETTE FA → Petto di Pollo Fette Farcite, SALE GROSSO IO → Sale Grosso Iodato, INSALATA VIVAC → Insalata Vivace, PANBAUL BIANCO → Panbaul Bianco
    - PAM FREEZER → prodotto surgelato PAM (es. "PAM FREEZER MEDI" → "Surgelati PAM Medi")
    - BIO SACC. OF 60% → Sacchetto Biodegradabile Oxo-Flap 60% (shopper biodegradabile — ESCLUDI dagli items come shopper/borsa)
    - Esselunga: NS → Nostra Spesa
    - GX2 → confezione doppia
    - PETALI SPECK → Petali di Speck, NEGRO → (marca)
-   - ROBERTO G. PIADA → Roberto Giordano Piadina
+   - ROBERTO G. PIADA / ROBERT G.PIAD → Roberto Giordano Piadina
+   - ROBER HAMB → Robert Hamburger, MEG MAX → Mega Max
+   - KELL. → Kellogg's, COCOOPS BARC → CocoPops Barchette
+   - MULLER / MULLER → Müller (marca yogurt), 8 BIANCO MULLER → Yogurt 8 Bianco Müller
+   - FATT.ULIV OLIO EVO → Olio Extra Vergine di Oliva Frantoi Ulivi
+   - MANT OLIO EX.V. EQ → Olio Extra Vergine Equosolidale
+   - PASSATA MUTT → Passata Mutti
+   - LENTICCHIE VAPORE → Lenticchie al Vapore
+   - SFOGLIAVELO CARNE → Sfogliatelle Velo alla Carne
+   - CEREALI T.PETALI CA → Cereali Petali al Cacao
+   - BARILLA PENN.RIGAT → Barilla Penne Rigate, BARILLA FUSILLI 98 → Barilla Fusilli n.98, BARILLA SPAGH.N.5 → Barilla Spaghetti n.5
+   - RUMMO FUSILLI / RUMMO PENNE RIGATE / RUMMO MEZ.PENNE.RI / RUMMO SPAGHETTI / RUMMO SPAGHETTONI → pasta Rummo (mantieni il formato del nome)
+   - P FILETTO FAM AIA → Filetto di Pollo Famiglia AIA
+   - CANNAMELA → Cannamela (spezie, mantieni il nome)
    - Prefisso "T " sugli scontrini PAM = indicatore IVA, ignoralo nel nome prodotto
 
 4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto (es. POLLO ARROSTO) sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome (es. "Gastronomia: Pollo Arrosto").

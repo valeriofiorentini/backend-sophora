@@ -78,16 +78,6 @@ REGOLE CRITICHE — seguile nell'ordine:
 
    NOTA: alcuni scontrini (es. PIM) hanno un trattino "-" dopo il prezzo (es. "2,49-"). Il trattino indica che l'IVA è inclusa nel prezzo — ignoralo, il prezzo è 2,49.
 
-   ESEMPIO CRITICO — scontrino PIM/Coop/Conad con colonne:
-   "BRAVO C.IGIENICA X6   22,00%   2,49"
-   → IVA = 22,00% (ignora), Prezzo = 2,49 € ✓  (NON 22,00 €!)
-   "C.STRACCHINOI 165G    4,00%    1,89"
-   → IVA = 4,00% (ignora), Prezzo = 1,89 € ✓  (NON 4,00 €!)
-
-   REGOLA ANTI-CONFUSIONE: se il "prezzo" che stai per scrivere è uguale a 4, 10 o 22 (con o senza decimali), FERMATI e rileggi la riga — stai quasi certamente leggendo la colonna IVA invece del prezzo reale. Cerca l'ultimo numero sulla riga che NON sia seguito da "%" — quello è il prezzo.
-
-   NOTA: alcuni scontrini (es. PIM) hanno un trattino "-" dopo il prezzo (es. "2,49-"). Il trattino indica che l'IVA è inclusa nel prezzo — ignoralo, il prezzo è 2,49.
-
 1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic." ecc., quella riga è lo sconto del prodotto precedente. Mettila nel campo "discount" di quel prodotto con valore positivo (es. 0.50, non -0.50), NON come prodotto separato.
 
 2. PRODOTTI DUPLICATI: Se lo stesso prodotto appare N volte (righe identiche), crea UN SOLO oggetto con "quantity": N e calcola unitPrice e totalPrice di conseguenza.
@@ -99,10 +89,15 @@ REGOLE CRITICHE — seguile nell'ordine:
    - C.S/S → Condimento/Salsa (C.S/S INS.RUSSA → "Insalata Russa")
    - INS. → Insalata, C.IGIENICA → Carta Igienica, C.STRACCHINO / C.STRACCHINOI → Stracchino
    - CALVE' / CALVÉ → Calvé, BRAVO → Bravo
-   - Misure: 165G → 165g, 200G → 200g, X6 → conf. da 6
-   - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi
+   - Misure: 165G → 165g, 200G → 200g, X6 → conf. da 6, X18 → conf. da 18, X10 → conf. da 10
+   - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi, FROL. → Frollini, CAC → Cacao, BASTONCINI → Bastoncini, SFOGLIAVELO → Sfogliatelle Velo, BIO-POM.DATTER → Bio Pomodori Datterini, SOTTILISSIME → Sottilissime, GROS → Grossa, CHAMP. → Champignon, AFFET → Affettati, PANCARRE → Pancarré, PIADA → Piadina, PR.CRUDO → Prosciutto Crudo, STAG → Stagionato, PANINI → Panini, HAMBURG → Hamburger, BOVI → Bovino, BIANCA SFOGLIA → Pasta Sfoglia Bianca, YOG → Yogurt, MAGRO BIAN → Magro Bianco, UOVA MEDIE → Uova Medie, BAGUETTE RU → Baguette Rustica
+   - PAM FREEZER → prodotto surgelato PAM (es. "PAM FREEZER MEDI" → "Surgelati PAM Medi")
+   - BIO SACC. OF 60% → Sacchetto Biodegradabile Oxo-Flap 60% (shopper biodegradabile — ESCLUDI dagli items come shopper/borsa)
    - Esselunga: NS → Nostra Spesa
    - GX2 → confezione doppia
+   - PETALI SPECK → Petali di Speck, NEGRO → (marca)
+   - ROBERTO G. PIADA → Roberto Giordano Piadina
+   - Prefisso "T " sugli scontrini PAM = indicatore IVA, ignoralo nel nome prodotto
 
 4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto (es. POLLO ARROSTO) sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome (es. "Gastronomia: Pollo Arrosto").
 

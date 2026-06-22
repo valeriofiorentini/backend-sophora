@@ -242,13 +242,23 @@ async function runAllScrapers() {
 
 // ─── Cron schedule ────────────────────────────────────────────────────────────
 function startScheduler() {
-  // Run every day at 06:00
+  // Ogni giorno alle 06:00
   cron.schedule('0 6 * * *', async () => {
     await cleanExpiredPromos();
+    // Scraper HTML legacy (Lidl/Eurospin/Conad): per lo piu' a vuoto perche' i
+    // siti bloccano i bot, ma non fa danni — lo teniamo come fallback.
     await runAllScrapers();
+    // Fonte prezzi reale: OCR dei volantini correnti (Tiendeo/ShopFully → GPT-4o).
+    // Anti-doppione integrato: salta i volantini gia' letti questa settimana.
+    try {
+      const { importFlyerPrices } = require('../../scripts/import-flyer-prices');
+      await importFlyerPrices();
+    } catch (err) {
+      console.warn('Flyer OCR import error:', err.message);
+    }
   });
 
-  console.log('📅 Promo scraper scheduled: daily at 06:00');
+  console.log('📅 Scheduler attivo: scraper + OCR volantini, ogni giorno alle 06:00');
 }
 
 module.exports = { startScheduler, runAllScrapers };

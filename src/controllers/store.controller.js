@@ -57,11 +57,47 @@ async function getStoresByLocation(req, res) {
 }
 
 async function getStoreById(req, res) {
-  const store = await prisma.store.findUnique({
+  let store = await prisma.store.findUnique({
     where: { id: req.params.storeId },
     include: { products: { take: 20 } },
   });
   if (!store) return error(res, 'Negozio non trovato', 404);
+
+  if (store.chain) {
+    const virtualProducts = await getChainProductsFromHistory(store.chain);
+    const flyerPromos = await getChainPromos(store.chain);
+
+    // Merge virtual products and flyer promos
+    const mergedProductsMap = new Map();
+
+    // 1. Put flyer promos first (high priority)
+    for (const p of flyerPromos) {
+      const key = p.name.toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+      mergedProductsMap.set(key, p);
+    }
+
+    // 2. Put receipt prices if not already present
+    for (const p of virtualProducts) {
+      const key = p.name.toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+      if (!mergedProductsMap.has(key)) {
+        mergedProductsMap.set(key, p);
+      }
+    }
+
+    // Merge with any existing products from the store (Product table)
+    for (const p of store.products) {
+      const key = p.name.toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+      mergedProductsMap.set(key, p);
+    }
+
+    const mergedList = [...mergedProductsMap.values()];
+
+    store = {
+      ...store,
+      products: mergedList.slice(0, 50)
+    };
+  }
+
   return success(res, { store });
 }
 
@@ -100,4 +136,111 @@ async function getNearbyStoresForProduct(req, res) {
   return success(res, { nearbyStores: results });
 }
 
-module.exports = { getStoresByLocation, getStoreById, getNearbyStoresForProduct };
+async function getChainProductsFromHistory(chainName) {
+  if (!chainName) return [];
+
+  // Fetch unique product keys and their latest prices from PriceHistory for this chain
+  const history = await prisma.priceHistory.findMany({
+    where: {
+      storeChain: { equals: chainName, mode: 'insensitive' }
+    },
+    orderBy: { observedAt: 'desc' }
+  });
+
+  // Unique by productKey (since they are ordered desc by observedAt, the first one seen is the latest)
+  const latestPrices = new Map();
+  for (const h of history) {
+    if (!latestPrices.has(h.productKey)) {
+      latestPrices.set(h.productKey, h);
+    }
+  }
+
+  if (latestPrices.size === 0) return [];
+
+  // Fetch receipt items for this chain to map productKey to a nice display name and category
+  const receiptItems = await prisma.receiptItem.findMany({
+    where: {
+      receipt: {
+        storeChain: { equals: chainName, mode: 'insensitive' }
+      }
+    },
+    select: {
+      name: true,
+      category: true,
+      barcode: true
+    }
+  });
+
+  // Map normalized name (productKey) to the display details (keep first seen name/details)
+  const keyToDetails = new Map();
+  for (const item of receiptItems) {
+    const key = item.name.toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+    if (!keyToDetails.has(key)) {
+      keyToDetails.set(key, {
+        name: item.name,
+        category: item.category,
+        barcode: item.barcode
+      });
+    }
+  }
+
+  // Build virtual products
+  const virtualProducts = [];
+  for (const [productKey, h] of latestPrices.entries()) {
+    const details = keyToDetails.get(productKey) || {
+      name: productKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      category: null,
+      barcode: null
+    };
+
+    virtualProducts.push({
+      id: h.id, // use price history ID as product ID
+      name: details.name,
+      barcode: details.barcode,
+      description: `Prezzo da scontrino (${h.source === 'receipt_ocr' ? 'rilevato' : 'volantino'})`,
+      price: Number(h.price),
+      originalPrice: null,
+      isOnSale: h.isOnSale,
+      category: details.category,
+      createdAt: h.observedAt,
+      updatedAt: h.observedAt,
+      source: h.source
+    });
+  }
+
+  return virtualProducts;
+}
+
+async function getChainPromos(chainName) {
+  if (!chainName) return [];
+  const promos = await prisma.promo.findMany({
+    where: {
+      storeChain: { equals: chainName, mode: 'insensitive' },
+      validUntil: { gt: new Date() }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  return promos.map(p => ({
+    id: p.id,
+    name: p.productName,
+    barcode: null,
+    description: `Offerta volantino (valida fino al ${p.validUntil.toLocaleDateString('it-IT')})`,
+    price: p.price,
+    originalPrice: p.originalPrice,
+    isOnSale: true,
+    category: null,
+    image: p.imageUrl,
+    createdAt: p.createdAt,
+    updatedAt: p.createdAt,
+    source: 'flyer_promo'
+  }));
+}
+
+module.exports = {
+  getStoresByLocation,
+  getStoreById,
+  getNearbyStoresForProduct,
+  getChainProductsFromHistory,
+  getChainPromos
+};

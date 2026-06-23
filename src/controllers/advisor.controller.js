@@ -121,7 +121,6 @@ async function getBasketAdvice(req, res) {
     where: {
       productKey: { in: basket.map(b => b.productKey) },
       observedAt: { gte: since },
-      storeChain: { not: null },
     },
     select: { productKey: true, storeChain: true, price: true },
   });

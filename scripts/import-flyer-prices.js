@@ -60,6 +60,8 @@ const SUPERMARKETS = [
   'famila', 'tigre', 'tigros', 'iper', 'bennet', 'unes', 'simply', 'deco', 'decò',
   'pewex', 'dok', 'sidis', 'aldi', 'naturasi', 'iperal', 'ekom', 'prix', 'in\'s',
   'a&o', 'tuodi', 'tuodì', 'il gigante', 'pim', 'sole 365', 'dpiu', 'dpiù',
+  'elite', 'gros', 'u2', 'pellicano', 'emme piu', 'emme più', 'dem', 'iper dem',
+  'doc', 'cts', 'castoro',
 ];
 
 const FLYER_PROMPT = `Analizza questo volantino promozionale italiano. Restituisci SOLO un JSON valido:

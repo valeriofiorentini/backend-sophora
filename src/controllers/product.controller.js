@@ -6,7 +6,14 @@ async function getProductsByStore(req, res) {
   const { storeId } = req.params;
   const { search, category, onSale } = req.query;
 
-  const products = await prisma.product.findMany({
+  const { getChainProductsFromHistory, getChainPromos } = require('./store.controller');
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId }
+  });
+  if (!store) return error(res, 'Negozio non trovato', 404);
+
+  let products = await prisma.product.findMany({
     where: {
       storeId,
       ...(search && { name: { contains: search, mode: 'insensitive' } }),
@@ -15,6 +22,50 @@ async function getProductsByStore(req, res) {
     },
     orderBy: { name: 'asc' },
   });
+
+  if (store.chain) {
+    const virtualProducts = await getChainProductsFromHistory(store.chain);
+    const flyerPromos = await getChainPromos(store.chain);
+
+    // Merge virtual products and flyer promos
+    const mergedProductsMap = new Map();
+
+    // 1. Put flyer promos first (high priority)
+    for (const p of flyerPromos) {
+      const key = p.name.toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+      mergedProductsMap.set(key, p);
+    }
+
+    // 2. Put receipt prices if not already present
+    for (const p of virtualProducts) {
+      const key = p.name.toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+      if (!mergedProductsMap.has(key)) {
+        mergedProductsMap.set(key, p);
+      }
+    }
+
+    // Merge with any existing products from the store (Product table)
+    for (const p of products) {
+      const key = p.name.toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+      mergedProductsMap.set(key, p);
+    }
+
+    let mergedList = [...mergedProductsMap.values()];
+
+    // Apply search/category/onSale filters on the merged list
+    if (search) {
+      const searchLower = search.toLowerCase();
+      mergedList = mergedList.filter(p => p.name.toLowerCase().includes(searchLower));
+    }
+    if (category) {
+      mergedList = mergedList.filter(p => p.category === category);
+    }
+    if (onSale === 'true') {
+      mergedList = mergedList.filter(p => p.isOnSale);
+    }
+
+    products = mergedList;
+  }
 
   return success(res, { products });
 }

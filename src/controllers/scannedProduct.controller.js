@@ -29,85 +29,41 @@ async function getByTimestamp(req, res) {
   const { timeStamp } = req.params;
   const { groupId } = req.query;
 
-  // timeStamp can be "YYYY-MM" for monthly view or a full ISO date
+  // timeStamp can be "YYYY-MM" for monthly view, a number in milliseconds, or a full ISO date
   let startDate, endDate;
   if (/^\d{4}-\d{2}$/.test(timeStamp)) {
     const [year, month] = timeStamp.split('-').map(Number);
     startDate = new Date(year, month - 1, 1);
     endDate = new Date(year, month, 0, 23, 59, 59);
   } else {
-    startDate = new Date(timeStamp);
-    endDate = new Date(timeStamp);
-    if (isNaN(startDate.getTime())) {
+    const parsedNum = Number(timeStamp);
+    const date = !isNaN(parsedNum) ? new Date(parsedNum) : new Date(timeStamp);
+
+    if (isNaN(date.getTime())) {
       const now = new Date();
       startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      endDate   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
     } else {
-      endDate.setHours(23, 59, 59);
+      // Since all client screens displaying this expect a monthly report/breakdown,
+      // we query for the entire month containing the date.
+      startDate = new Date(date.getFullYear(), date.getMonth(), 1);
+      endDate = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
     }
   }
 
-  // 1. Fetch manually scanned products
-  const whereScanned = {
+  const where = {
     userId: req.userId,
     timestamp: { gte: startDate, lte: endDate },
     ...(groupId && { groupId }),
   };
-  const items = await prisma.scannedProduct.findMany({ where: whereScanned, orderBy: { timestamp: 'desc' } });
 
-  // 2. Fetch items from processed receipts in the same period (if not filtering by group)
-  let receiptItemsMapped = [];
-  if (!groupId) {
-    const receiptItems = await prisma.receiptItem.findMany({
-      where: {
-        receipt: {
-          userId: req.userId,
-          status: 'processed',
-          OR: [
-            { receiptDate: { gte: startDate, lte: endDate } },
-            { receiptDate: null, processedAt: { gte: startDate, lte: endDate } }
-          ]
-        }
-      },
-      include: {
-        receipt: true
-      }
-    });
-
-    receiptItemsMapped = receiptItems.map(ri => ({
-      id: ri.id,
-      userId: req.userId,
-      barcode: ri.barcode,
-      name: ri.name,
-      price: parseFloat(ri.unitPrice || 0),
-      quantity: ri.quantity || 1,
-      storeId: ri.receipt.storeName || ri.receipt.storeChain || 'Scontrino',
-      timestamp: ri.receipt.receiptDate || ri.receipt.processedAt
-    }));
-  }
-
-  // 3. Combine both lists
-  const allProducts = [
-    ...items.map(i => ({
-      id: i.id,
-      userId: i.userId,
-      barcode: i.barcode,
-      name: i.name,
-      price: i.price,
-      quantity: i.quantity,
-      storeId: i.storeId,
-      timestamp: i.timestamp
-    })),
-    ...receiptItemsMapped
-  ];
-
-  // 4. Calculate total spent (price * quantity)
-  const total = allProducts.reduce((s, p) => s + (p.price * p.quantity), 0);
+  const items = await prisma.scannedProduct.findMany({ where, orderBy: { timestamp: 'desc' } });
+  const total = items.reduce((s, i) => s + i.price * i.quantity, 0);
 
   return success(res, {
-    items: allProducts,
-    products: allProducts, // Support frontend looking for 'products' key
-    total: parseFloat(total.toFixed(2))
+    products: items, // Frontend expects "products"
+    items,           // Backward compatibility / database terms
+    total: parseFloat(total.toFixed(2)),
   });
 }
 

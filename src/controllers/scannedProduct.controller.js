@@ -47,16 +47,68 @@ async function getByTimestamp(req, res) {
     }
   }
 
-  const where = {
+  // 1. Fetch manually scanned products
+  const whereScanned = {
     userId: req.userId,
     timestamp: { gte: startDate, lte: endDate },
     ...(groupId && { groupId }),
   };
+  const items = await prisma.scannedProduct.findMany({ where: whereScanned, orderBy: { timestamp: 'desc' } });
 
-  const items = await prisma.scannedProduct.findMany({ where, orderBy: { timestamp: 'desc' } });
-  const total = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  // 2. Fetch items from processed receipts in the same period (if not filtering by group)
+  let receiptItemsMapped = [];
+  if (!groupId) {
+    const receiptItems = await prisma.receiptItem.findMany({
+      where: {
+        receipt: {
+          userId: req.userId,
+          status: 'processed',
+          OR: [
+            { receiptDate: { gte: startDate, lte: endDate } },
+            { receiptDate: null, processedAt: { gte: startDate, lte: endDate } }
+          ]
+        }
+      },
+      include: {
+        receipt: true
+      }
+    });
 
-  return success(res, { items, total: parseFloat(total.toFixed(2)) });
+    receiptItemsMapped = receiptItems.map(ri => ({
+      id: ri.id,
+      userId: req.userId,
+      barcode: ri.barcode,
+      name: ri.name,
+      price: parseFloat(ri.unitPrice || 0),
+      quantity: ri.quantity || 1,
+      storeId: ri.receipt.storeName || ri.receipt.storeChain || 'Scontrino',
+      timestamp: ri.receipt.receiptDate || ri.receipt.processedAt
+    }));
+  }
+
+  // 3. Combine both lists
+  const allProducts = [
+    ...items.map(i => ({
+      id: i.id,
+      userId: i.userId,
+      barcode: i.barcode,
+      name: i.name,
+      price: i.price,
+      quantity: i.quantity,
+      storeId: i.storeId,
+      timestamp: i.timestamp
+    })),
+    ...receiptItemsMapped
+  ];
+
+  // 4. Calculate total spent (price * quantity)
+  const total = allProducts.reduce((s, p) => s + (p.price * p.quantity), 0);
+
+  return success(res, {
+    items: allProducts,
+    products: allProducts, // Support frontend looking for 'products' key
+    total: parseFloat(total.toFixed(2))
+  });
 }
 
 async function deleteById(req, res) {

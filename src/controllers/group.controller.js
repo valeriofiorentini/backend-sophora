@@ -28,34 +28,56 @@ async function getGroupIfMember(groupId, userId) {
 }
 
 async function createGroup(req, res) {
-  const { name, budget, members = [] } = req.body;
-  if (!name) return error(res, 'Nome gruppo obbligatorio');
+  try {
+    const { name, groupName, budget, members = [], participants = [] } = req.body;
+    
+    // Support both name and groupName
+    const finalName = name || groupName;
+    if (!finalName) return error(res, 'Nome gruppo obbligatorio');
 
-  // Genera un codice invito unico (ritenta in caso di collisione)
-  let inviteCode;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const candidate = generateInviteCode();
-    const exists = await prisma.group.findUnique({ where: { inviteCode: candidate } });
-    if (!exists) { inviteCode = candidate; break; }
-  }
+    // Support both members and participants
+    const finalMembers = (Array.isArray(members) && members.length > 0)
+      ? members
+      : (Array.isArray(participants) ? participants : []);
 
-  const group = await prisma.group.create({
-    data: {
-      name,
-      budget,
-      ownerId: req.userId,
-      inviteCode,
-      members: {
-        create: members.map(m => ({
-          name: m.name,
-          userId: m.userId || null,
-        })),
+    // Safely parse budget to float if provided
+    let parsedBudget = null;
+    if (budget != null && String(budget).trim() !== '') {
+      parsedBudget = parseFloat(budget);
+      if (isNaN(parsedBudget)) {
+        return error(res, 'Il budget inserito non è un numero valido');
+      }
+    }
+
+    // Genera un codice invito unico (ritenta in caso di collisione)
+    let inviteCode;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = generateInviteCode();
+      const exists = await prisma.group.findUnique({ where: { inviteCode: candidate } });
+      if (!exists) { inviteCode = candidate; break; }
+    }
+
+    const group = await prisma.group.create({
+      data: {
+        name: finalName,
+        budget: parsedBudget,
+        ownerId: req.userId,
+        inviteCode,
+        members: {
+          create: finalMembers.map(m => ({
+            name: m.name || m.email?.split('@')[0] || 'Membro',
+            userId: m.userId || null,
+          })),
+        },
       },
-    },
-    include: { members: true },
-  });
+      include: { members: true },
+    });
 
-  return success(res, { group }, 201);
+    return success(res, { group }, 201);
+  } catch (err) {
+    console.error('Error creating group:', err);
+    return error(res, 'Errore durante la creazione del gruppo: ' + err.message, 500);
+  }
 }
 
 // ─── POST /api/group/join  { code } ─────────────────────────────────────────────

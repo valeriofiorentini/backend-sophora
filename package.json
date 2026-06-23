@@ -1,7 +1,7 @@
 {
-  "name": "shopora-backend",
+  "name": "easymarket-backend",
   "version": "1.0.0",
-  "description": "Shopora API Backend",
+  "description": "EasyMarket API Backend",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",

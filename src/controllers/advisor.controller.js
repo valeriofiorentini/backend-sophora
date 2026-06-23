@@ -134,48 +134,78 @@ async function getBasketAdvice(req, res) {
     m.get(h.productKey).push(Number(h.price));
   }
 
+  // 1. Get processed receipts count in the last 90 days for Option B
+  const receiptCount = await prisma.receipt.count({
+    where: {
+      userId: req.userId,
+      status: 'processed',
+      OR: [
+        { receiptDate: { gte: new Date(Date.now() - BASKET_WINDOW_DAYS * 86_400_000) } },
+        { receiptDate: null, processedAt: { gte: new Date(Date.now() - BASKET_WINDOW_DAYS * 86_400_000) } },
+      ],
+    },
+  });
+  const totalReceipts = receiptCount || 1;
+
   // Per ogni catena: risparmio stimato sul sottoinsieme coperto
   const chains = [];
   for (const [chainName, products] of byChain.entries()) {
-    let savings = 0;
-    let comparableSpend = 0;
+    let savings90Days = 0;
+    let comparableSpend90Days = 0;
+    let savingsSingleTrip = 0;
+    let comparableSpendSingleTrip = 0;
     const details = [];
 
     for (const b of basket) {
       const prices = products.get(b.productKey);
       if (!prices) continue;
       const chainMedian = median(prices);
-      const diff = (b.medianPaid - chainMedian) * b.avgQuantity * b.purchases;
-      savings         += diff;
-      comparableSpend += b.medianPaid * b.avgQuantity * b.purchases;
+      
+      const diffSingle = (b.medianPaid - chainMedian) * b.avgQuantity;
+      const diff90Days = diffSingle * b.purchases;
+      
+      savingsSingleTrip         += diffSingle;
+      comparableSpendSingleTrip += b.medianPaid * b.avgQuantity;
+      
+      savings90Days             += diff90Days;
+      comparableSpend90Days     += b.medianPaid * b.avgQuantity * b.purchases;
+      
       details.push({
         name:        b.name,
         youPay:      b.medianPaid,
         chainPrice:  round2(chainMedian),
-        savingTotal: round2(diff),
+        savingTotal: round2(diff90Days),
       });
     }
 
     if (details.length === 0) continue;
 
+    const savingPerTripAvg = savings90Days / totalReceipts;
+    const comparableSpendPerTripAvg = comparableSpend90Days / totalReceipts;
+
     chains.push({
-      chain:           chainName,
-      coveredProducts: details.length,
-      coveragePct:     Math.round((details.length / basket.length) * 100),
-      estimatedSaving: round2(savings),
-      comparableSpend: round2(comparableSpend),
+      chain:                      chainName,
+      coveredProducts:            details.length,
+      coveragePct:                Math.round((details.length / basket.length) * 100),
+      estimatedSaving:            round2(savings90Days),
+      comparableSpend:            round2(comparableSpend90Days),
+      savingPerTrip:              round2(savingsSingleTrip),
+      comparableSpendPerTrip:     round2(comparableSpendSingleTrip),
+      savingPerTripAvg:           round2(savingPerTripAvg),
+      comparableSpendPerTripAvg:  round2(comparableSpendPerTripAvg),
       // top 5 prodotti dove risparmi di più in questa catena
-      topSavings: details.sort((a, b) => b.savingTotal - a.savingTotal).slice(0, 5),
+      topSavings:                 details.sort((a, b) => b.savingTotal - a.savingTotal).slice(0, 5),
     });
   }
 
-  // Ordina per risparmio stimato decrescente
-  chains.sort((a, b) => b.estimatedSaving - a.estimatedSaving);
+  // Ordina per risparmio per spesa decrescente (Opzione A)
+  chains.sort((a, b) => b.savingPerTrip - a.savingPerTrip);
 
-  const best = chains.find(ch => ch.estimatedSaving > 0);
+  const best = chains.find(ch => ch.savingPerTrip > 0);
   const message = best
-    ? `Facendo la spesa da ${best.chain} risparmieresti circa €${best.estimatedSaving.toFixed(2)} ` +
-      `sui ${best.coveredProducts} prodotti confrontabili della tua spesa tipo (totale ultimi ${BASKET_WINDOW_DAYS} giorni).`
+    ? `Facendo la spesa da ${best.chain} risparmieresti circa €${best.savingPerTrip.toFixed(2)} a spesa ` +
+      `(circa €${best.estimatedSaving.toFixed(2)} totali negli ultimi ${BASKET_WINDOW_DAYS} giorni) ` +
+      `sui ${best.coveredProducts} prodotti confrontabili della tua spesa tipo.`
     : 'Stai già facendo la spesa nelle catene più convenienti per i tuoi prodotti, ' +
       'oppure non ci sono ancora abbastanza dati di confronto.';
 

@@ -78,7 +78,9 @@ REGOLE CRITICHE — seguile nell'ordine:
 
    NOTA: alcuni scontrini (es. PIM) hanno un trattino "-" dopo il prezzo (es. "2,49-"). Il trattino indica che l'IVA è inclusa nel prezzo — ignoralo, il prezzo è 2,49.
 
-1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic." ecc., quella riga è lo sconto del prodotto precedente. Mettila nel campo "discount" di quel prodotto con valore positivo (es. 0.50, non -0.50), NON come prodotto separato.
+   ATTENZIONE PREZZI: Se un prezzo inizia con "4" o "4,xx" o "4.xx" verifica attentamente che non sia una lettura errata del "1" iniziale (es. "1,79" che sembra "4,79" su foto storta). Controlla sempre la coerenza col totale finale.
+
+1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic.", "Taglio Prezzo", "TAGLIO PREZZO", "Articolo prezzo fisso", "ARTICOLO PREZZO FISSO", "Sconto 10% AH", "SCONTO AH", "sconto soci" ecc., quella riga è uno SCONTO/RIDUZIONE, NON un prodotto. Mettila nel campo "discount" del prodotto precedente con valore positivo (es. 1.30, non -1.30), NON come prodotto separato. Se non c'è un prodotto precedente chiaro, ignorala.
 
 2. PRODOTTI DUPLICATI: Se lo stesso prodotto appare N volte (righe identiche), crea UN SOLO oggetto con "quantity": N e calcola unitPrice e totalPrice di conseguenza.
 
@@ -90,6 +92,8 @@ REGOLE CRITICHE — seguile nell'ordine:
    - INS. → Insalata, C.IGIENICA → Carta Igienica, C.STRACCHINO / C.STRACCHINOI → Stracchino
    - CALVE' / CALVÉ → Calvé, BRAVO → Bravo
    - Misure: 165G → 165g, 200G → 200g, X6 → conf. da 6, X18 → conf. da 18, X10 → conf. da 10
+   - Consilia: brand di prodotti a marchio IPER/SGM. CONSILIA STRACC. → "Consilia Stracchino", CONSILIA GOCCE → "Consilia Gocce (cioccolato)", CONSILIA SACCHI GELO → "Consilia Sacchi Gelo", CONSILIA STRAC. → "Consilia Stracchino"
+   - IPER/Triscount: catena IPER. PESCHE NETT. → "Pesche Nette", CREMA P.STELLE → "Crema Pasticcera alle Stelle", FOXY CARTA CUCINA → "Foxy Carta Cucina"
    - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi, FROL. → Frollini, CAC → Cacao, BASTONCINI → Bastoncini, SFOGLIAVELO → Sfogliatelle Velo, BIO-POM.DATTER → Bio Pomodori Datterini, SOTTILISSIME → Sottilissime, GROS → Grossa, CHAMP. → Champignon, AFFET → Affettati, PANCARRE → Pancarré, PIADA → Piadina, PR.CRUDO → Prosciutto Crudo, STAG → Stagionato, PANINI → Panini, HAMBURG → Hamburger, BOVI → Bovino, BIANCA SFOGLIA → Pasta Sfoglia Bianca, YOG → Yogurt, MAGRO BIAN → Magro Bianco, UOVA MEDIE → Uova Medie, BAGUETTE RU → Baguette Rustica, G.PADANO GRATT → Grana Padano Grattugiato, FILETTO DI MER → Filetto di Merluzzo, PETTO FETTE FA → Petto di Pollo Fette Farcite, SALE GROSSO IO → Sale Grosso Iodato, INSALATA VIVAC → Insalata Vivace, PANBAUL BIANCO → Panbaul Bianco
    - PAM FREEZER → prodotto surgelato PAM (es. "PAM FREEZER MEDI" → "Surgelati PAM Medi")
    - BIO SACC. OF 60% → Sacchetto Biodegradabile Oxo-Flap 60% (shopper biodegradabile — ESCLUDI dagli items come shopper/borsa)
@@ -127,7 +131,7 @@ REGOLE CRITICHE — seguile nell'ordine:
 Struttura JSON da restituire:
 {
   "storeName": "nome negozio completo o null",
-  "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros, Pim o null",
+  "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros, Pim, Iper, MD, Todis, Pewex, Bennet o null",
   "storeAddress": "indirizzo completo o null",
   "receiptDate": "YYYY-MM-DD o null",
   "items": [

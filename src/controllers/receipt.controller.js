@@ -86,7 +86,7 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 3. TOTALE REALE: Il campo "totalAmount" deve essere il totale EFFETTIVAMENTE PAGATO, cioè il SUBTOTALE meno tutti gli sconti post-subtotale (es. "Sconto 10% AH", "SCONTO SOCI", "SCONTO X%"). Se lo scontrino mostra: SUBTOTALE 16,45 → Sconto 10% AH -1,65 → allora totalAmount = 14,80. Il campo "totalDiscount" include sia gli sconti per articolo sia lo sconto globale. NON usare il SUBTOTALE come totalAmount se ci sono sconti aggiuntivi dopo.
 
-3b. NOME NEGOZIO: Se lo scontrino ha sia un'insegna commerciale (es. "Iper Triscount") sia una ragione sociale legale (es. "SGM Supermercati Srl"), combinale così: "Iper Triscount - SGM Supermercati Srl". Se c'è solo una delle due, usa quella.
+3b. NOME NEGOZIO: Leggi l'insegna/brand ESATTAMENTE come è stampato sullo scontrino (es. "IPER TRISCOUNT", "Conad", "Esselunga") — non inventare o correggere l'ortografia. Se è presente anche una ragione sociale generica (es. "SGM Supermercati Srl", "XYZ Srl", "ABC SpA"), combinale: "IPER TRISCOUNT - SGM Supermercati Srl". Se lo scontrino ha SOLO la ragione sociale senza un'insegna riconoscibile, usa solo quella. Priorità: insegna brand > ragione sociale.
 
 4. NOMI PRODOTTI: Mantieni il nome il più completo e fedele possibile allo scontrino. Espandi le abbreviazioni ma non perdere informazioni importanti:
    - C.N.FIL → Conserva/Filetti (es. C.N.FIL.MELANZANE → "Filetti di Melanzane sottoolio")
@@ -95,7 +95,8 @@ REGOLE CRITICHE — seguile nell'ordine:
    - CALVE' / CALVÉ → Calvé, BRAVO → Bravo
    - Misure: 165G → 165g, 200G → 200g, X6 → conf. da 6, X18 → conf. da 18, X10 → conf. da 10
    - Consilia: brand di prodotti a marchio IPER/SGM. CONSILIA STRACC. → "Consilia Stracchino", CONSILIA GOCCE → "Consilia Gocce (cioccolato)", CONSILIA SACCHI GELO → "Consilia Sacchi Gelo", CONSILIA STRAC. → "Consilia Stracchino"
-   - IPER/Triscount: catena IPER. PESCHE NETT. → "Pesche Nette", CREMA P.STELLE → "Crema Pasticcera alle Stelle", FOXY CARTA CUCINA → "Foxy Carta Cucina"
+   - PESCHE NETT. → "Pesche Nette", CREMA P.STELLE / CREMA PAN STELLE / CREMA STELLE → "Crema Pan di Stelle" (è il biscotto Nestlé Pan di Stelle, NON pasticcera generica), FOXY CARTA CUCINA → "Foxy Carta Cucina"
+   - Regola "STELLE": se vedi "STELLE" o "P.STELLE" vicino a "CREMA", è sempre "Pan di Stelle" (Nestlé). Se vedi "PASTICCERA" senza "STELLE", allora è crema pasticcera generica.
    - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi, FROL. → Frollini, CAC → Cacao, BASTONCINI → Bastoncini, SFOGLIAVELO → Sfogliatelle Velo, BIO-POM.DATTER → Bio Pomodori Datterini, SOTTILISSIME → Sottilissime, GROS → Grossa, CHAMP. → Champignon, AFFET → Affettati, PANCARRE → Pancarré, PIADA → Piadina, PR.CRUDO → Prosciutto Crudo, STAG → Stagionato, PANINI → Panini, HAMBURG → Hamburger, BOVI → Bovino, BIANCA SFOGLIA → Pasta Sfoglia Bianca, YOG → Yogurt, MAGRO BIAN → Magro Bianco, UOVA MEDIE → Uova Medie, BAGUETTE RU → Baguette Rustica, G.PADANO GRATT → Grana Padano Grattugiato, FILETTO DI MER → Filetto di Merluzzo, PETTO FETTE FA → Petto di Pollo Fette Farcite, SALE GROSSO IO → Sale Grosso Iodato, INSALATA VIVAC → Insalata Vivace, PANBAUL BIANCO → Panbaul Bianco
    - PAM FREEZER → prodotto surgelato PAM (es. "PAM FREEZER MEDI" → "Surgelati PAM Medi")
    - BIO SACC. OF 60% → Sacchetto Biodegradabile Oxo-Flap 60% (shopper biodegradabile — ESCLUDI dagli items come shopper/borsa)
@@ -121,7 +122,7 @@ REGOLE CRITICHE — seguile nell'ordine:
 4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto (es. POLLO ARROSTO) sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome (es. "Gastronomia: Pollo Arrosto").
 
 5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio.
-   ESCLUDI SEMPRE shopper e sacchetti: "BIO SACC.", "SACC. OF", "SHOPPER", "BORSA", "SACCHETTO BIOD", "BUSTA" — sono imballaggi, non prodotti. Tipicamente costano €0,01-€0,50 e hanno IVA 22%.
+   INCLUDI sempre shopper e sacchetti anche se costano poco (es. "SHOPPER MAT-BIO €0,12") — l'utente vuole vedere tutto quello che ha pagato.
    NON escludere MAI prodotti alimentari o prodotti per la casa — includi assolutamente TUTTI i prodotti con un prezzo.
 
 5b. NESSUN PRODOTTO SALTATO: Conta le righe prodotto sullo scontrino e verifica che l'array "items" abbia lo stesso numero di elementi. Se una riga ha un prezzo valido e non è un subtotale/IVA, deve essere inclusa.

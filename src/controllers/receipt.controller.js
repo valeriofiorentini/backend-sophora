@@ -86,7 +86,7 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 3. TOTALE REALE: Il campo "totalAmount" deve essere il totale EFFETTIVAMENTE PAGATO, cioè il SUBTOTALE meno tutti gli sconti post-subtotale (es. "Sconto 10% AH", "SCONTO SOCI", "SCONTO X%"). Se lo scontrino mostra: SUBTOTALE 16,45 → Sconto 10% AH -1,65 → allora totalAmount = 14,80. Il campo "totalDiscount" include sia gli sconti per articolo sia lo sconto globale. NON usare il SUBTOTALE come totalAmount se ci sono sconti aggiuntivi dopo.
 
-3b. NOME NEGOZIO: Usa il nome del brand/insegna (quello in alto sullo scontrino, es. "Iper Triscount", "PIM", "Conad") come storeName, NON la ragione sociale legale (es. "SGM Supermercati Srl"). Se entrambi presenti, preferisci il brand commerciale riconoscibile dal cliente.
+3b. NOME NEGOZIO: Se lo scontrino ha sia un'insegna commerciale (es. "Iper Triscount") sia una ragione sociale legale (es. "SGM Supermercati Srl"), combinale così: "Iper Triscount - SGM Supermercati Srl". Se c'è solo una delle due, usa quella.
 
 4. NOMI PRODOTTI: Mantieni il nome il più completo e fedele possibile allo scontrino. Espandi le abbreviazioni ma non perdere informazioni importanti:
    - C.N.FIL → Conserva/Filetti (es. C.N.FIL.MELANZANE → "Filetti di Melanzane sottoolio")
@@ -197,19 +197,44 @@ async function scanReceipt(req, res) {
     const response   = await callOcrApi(firstModel, messages);
     const rawContent = response.choices[0].message.content;
 
+    let parsedFirst;
     try {
-      parsed = JSON.parse(rawContent);
+      parsedFirst = JSON.parse(rawContent);
       console.info(`[receipt] OCR ok con modello ${firstModel}`);
     } catch {
-      // Parse fallito → scala a gpt-4o (più capace, 10x costoso)
-      console.warn(`[receipt] JSON malformato da ${firstModel}, fallback a ${OCR_MODEL_ACCURATE}`);
+      parsedFirst = null;
+    }
+
+    // Validazione somma item vs totalAmount: se discrepanza >5% o JSON malformato → fallback gpt-4o
+    const needsFallback = !parsedFirst || (() => {
+      const items = Array.isArray(parsedFirst.items) ? parsedFirst.items : [];
+      const sumItems = items.reduce((acc, i) => acc + (parseFloat(i.totalPrice) || 0), 0);
+      const total = parseFloat(parsedFirst.totalAmount) || 0;
+      if (total <= 0 || items.length === 0) return false;
+      const diff = Math.abs(sumItems - total) / total;
+      if (diff > 0.05) {
+        console.warn(`[receipt] somma item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}% → fallback gpt-4o`);
+        return true;
+      }
+      return false;
+    })();
+
+    if (needsFallback) {
+      console.warn(`[receipt] fallback a ${OCR_MODEL_ACCURATE}`);
       const fallbackRes = await callOcrApi(OCR_MODEL_ACCURATE, [
         ...messages,
-        { role: 'assistant', content: rawContent },
-        { role: 'user', content: 'Il JSON precedente è malformato. Restituisci SOLO il JSON corretto senza markdown, backtick o testo extra.' },
+        ...(parsedFirst ? [
+          { role: 'assistant', content: rawContent },
+          { role: 'user', content: 'La somma dei prezzi degli item non corrisponde al totalAmount. Rileggi attentamente ogni riga del prezzo nella colonna PREZZO(€) e restituisci il JSON corretto.' },
+        ] : [
+          { role: 'assistant', content: rawContent },
+          { role: 'user', content: 'Il JSON precedente è malformato. Restituisci SOLO il JSON corretto senza markdown, backtick o testo extra.' },
+        ]),
       ]);
       parsed = JSON.parse(fallbackRes.choices[0].message.content);
       console.info(`[receipt] OCR ok con fallback ${OCR_MODEL_ACCURATE}`);
+    } else {
+      parsed = parsedFirst;
     }
   } catch (ocrErr) {
     console.error('[receipt] OCR error:', ocrErr.message);

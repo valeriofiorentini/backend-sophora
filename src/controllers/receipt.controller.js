@@ -82,9 +82,11 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic.", "Taglio Prezzo", "TAGLIO PREZZO", "Articolo prezzo fisso", "ARTICOLO PREZZO FISSO", "Sconto 10% AH", "SCONTO AH", "sconto soci" ecc., quella riga è uno SCONTO/RIDUZIONE, NON un prodotto. Mettila nel campo "discount" del prodotto precedente con valore positivo (es. 1.30, non -1.30), NON come prodotto separato. Se non c'è un prodotto precedente chiaro, ignorala.
 
-2. PRODOTTI DUPLICATI: Se lo stesso prodotto appare N volte (righe identiche), crea UN SOLO oggetto con "quantity": N e calcola unitPrice e totalPrice di conseguenza.
+2. PRODOTTI DUPLICATI: Unisci in UN SOLO oggetto SOLO se il prodotto ha ESATTAMENTE lo stesso nome E lo stesso prezzo unitario. Due righe con nomi simili ma prezzi diversi sono prodotti DISTINTI — non unire. Esempio: due righe "CONSILIA STRACC.165G 4% 1,89" identiche → un oggetto con quantity:2, unitPrice:1.89, totalPrice:3.78. Ma "CONSILIA STRACC.165G" e "CONSILIA GOCCE 250G" sono prodotti DIVERSI anche se entrambi "Consilia".
 
-3. TOTALE REALE: Il campo "totalAmount" deve essere il totale pagato in denaro (voce "TOTALE COMPLESSIVO" o "IMPORTO EURO"). Ignora BUONI PASTO, BUONI SCONTO, PUNTI FEDELTÀ — non sono pagamenti reali.
+3. TOTALE REALE: Il campo "totalAmount" deve essere il totale EFFETTIVAMENTE PAGATO, cioè il SUBTOTALE meno tutti gli sconti post-subtotale (es. "Sconto 10% AH", "SCONTO SOCI", "SCONTO X%"). Se lo scontrino mostra: SUBTOTALE 16,45 → Sconto 10% AH -1,65 → allora totalAmount = 14,80. Il campo "totalDiscount" include sia gli sconti per articolo sia lo sconto globale. NON usare il SUBTOTALE come totalAmount se ci sono sconti aggiuntivi dopo.
+
+3b. NOME NEGOZIO: Usa il nome del brand/insegna (quello in alto sullo scontrino, es. "Iper Triscount", "PIM", "Conad") come storeName, NON la ragione sociale legale (es. "SGM Supermercati Srl"). Se entrambi presenti, preferisci il brand commerciale riconoscibile dal cliente.
 
 4. NOMI PRODOTTI: Mantieni il nome il più completo e fedele possibile allo scontrino. Espandi le abbreviazioni ma non perdere informazioni importanti:
    - C.N.FIL → Conserva/Filetti (es. C.N.FIL.MELANZANE → "Filetti di Melanzane sottoolio")

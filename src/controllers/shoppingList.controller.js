@@ -190,16 +190,19 @@ async function estimateList(req, res) {
   let nearestStore = null;
   if (userLat && userLon && chainEstimates.length > 0) {
     const topChains = chainEstimates.slice(0, 3).map(c => c.chain);
+    // Il campo sul model Store è "chain" (non "storeChain"): usare storeChain qui
+    // faceva crashare la query in 500 → "Impossibile stimare i prezzi" lato app.
     const stores = await prisma.store.findMany({
-      where: { storeChain: { in: topChains } },
-      select: { id: true, name: true, storeChain: true, latitude: true, longitude: true, address: true },
+      where: { chain: { in: topChains } },
+      select: { id: true, name: true, chain: true, latitude: true, longitude: true, address: true },
       take: 50,
     });
     let best = null; let bestDist = Infinity;
     for (const s of stores) {
       if (!s.latitude || !s.longitude) continue;
       const d = distanceKm(userLat, userLon, Number(s.latitude), Number(s.longitude));
-      if (d < bestDist) { bestDist = d; best = { ...s, distanceKm: round2(d) }; }
+      // storeChain: alias per il frontend (che legge nearestStore.storeChain)
+      if (d < bestDist) { bestDist = d; best = { ...s, storeChain: s.chain, distanceKm: round2(d) }; }
     }
     nearestStore = best;
   }

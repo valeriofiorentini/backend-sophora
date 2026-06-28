@@ -30,14 +30,33 @@ const KNOWN_CHAINS = [
   'Tigre', 'Tigros', 'Elite', 'Famila', 'Simply', 'Deco', 'Decò', 'In\'s', 'Aldi',
   'Bennet', 'Iper', 'Pellicano', 'Emme Più', 'A&O', 'Dok', 'Sidis', 'Conad City',
   'Pewex', 'Gros', 'Iperal', 'Unes', 'U2', 'Ekom', 'Prix', 'Naturasi', 'NaturaSi',
+  // Regionali / insegne aggiuntive
+  'Ipertriscount', 'Iper Triscount', 'Triscount', 'Sole 365', 'Sole365', 'Dpiù', 'Dpiu',
+  'Famila Superstore', 'Conad Superstore', 'Conad City', 'Spazio Conad', 'Margherita',
+  'Tuodì', 'Tuodi', 'Risparmio Casa', 'Acqua & Sapone', 'Galassia', 'Maxisidis',
+  'Carrefour Express', 'Carrefour Market', 'Lidl Italia', 'Eurospin Italia', 'Penny Market',
+  'Gigante', 'Il Gigante', 'Basko', 'Doro', 'Coop Alleanza', 'Ipercoop', 'Auchan',
+  'Bennet', 'Famila Market', 'Crai Express', 'Sebon', 'Migross', 'Cadoro', 'Alì', 'Ali',
 ];
+
+// Normalizza per il confronto: minuscolo, niente accenti/punteggiatura, spazi singoli
+function normChain(s) {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
 
 function inferChain(tags) {
   const brand = tags.brand || tags.operator;
   if (brand) return brand.trim().slice(0, 60);
-  const name = (tags.name || '').toLowerCase();
-  for (const c of KNOWN_CHAINS) {
-    if (name.includes(c.toLowerCase())) return c;
+  const name = normChain(tags.name);
+  if (!name) return null;
+  // Ordina per lunghezza decrescente: "Conad Superstore" prima di "Conad"
+  const sorted = [...KNOWN_CHAINS].sort((a, b) => b.length - a.length);
+  for (const c of sorted) {
+    if (name.includes(normChain(c))) return c;
   }
   return null;
 }

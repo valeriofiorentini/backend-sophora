@@ -326,7 +326,7 @@ async function scanReceipt(req, res) {
   //     fossero prodotti (es. "Sconto Soci", "Taglio Prezzo", "Volantino" con prezzo 0)
   //     — a volte rigurgita persino gli esempi dal prompt. Gli sconti veri sono già
   //     nel campo discount dei prodotti reali: queste pseudo-righe vanno rimosse.
-  const DISCOUNT_LABEL = /^\s*(scont|tagli\s*prezz|articolo\s*prezzo\s*fisso|volantin|promo\b|offert|riduzion|buono\s*sconto|sconto\s*reparti)/i;
+  const DISCOUNT_LABEL = /^\s*(scont|taglio?\s*prezz|articolo\s*prezzo\s*fisso|volantin|promo\b|offert|riduzion|buono\s*sconto)/i;
   const items = (Array.isArray(parsed.items) ? parsed.items : []).filter(it => {
     const name = (it?.name || it?.rawName || '').trim();
     if (!name) return false;                         // niente nome → scarta

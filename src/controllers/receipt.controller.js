@@ -81,11 +81,14 @@ REGOLE CRITICHE — seguile nell'ordine:
 
    ATTENZIONE PREZZI: Se un prezzo inizia con "4" o "4,xx" o "4.xx" verifica attentamente che non sia una lettura errata del "1" iniziale (es. "1,79" che sembra "4,79" su foto storta). Controlla sempre la coerenza col totale finale.
 
-1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic.", "Taglio Prezzo", "TAGLIO PREZZO", "Articolo prezzo fisso", "ARTICOLO PREZZO FISSO", "Sconto 10% AH", "SCONTO AH", "sconto soci" ecc., quella riga è uno SCONTO/RIDUZIONE, NON un prodotto. Mettila nel campo "discount" del prodotto precedente con valore positivo (es. 1.30, non -1.30), NON come prodotto separato. Se non c'è un prodotto precedente chiaro, ignorala.
+1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "VOLANTINO", "VOLANTINO XX" (dove XX è il numero dello sconto in centesimi o euro), "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic.", "Taglio Prezzo", "TAGLIO PREZZO", "Articolo prezzo fisso", "ARTICOLO PREZZO FISSO", "Sconto 10% AH", "SCONTO AH", "sconto soci" ecc., quella riga è uno SCONTO/RIDUZIONE, NON un prodotto. Mettila nel campo "discount" del prodotto precedente con valore positivo (es. 1.30, non -1.30), NON come prodotto separato.
+   REGOLA "VOLANTINO XX": se vedi "VOLANTINO" seguito da un numero (es. "VOLANTINO 17", "VOLANTINO 0,49", "VOLANTINO 1.19"), il numero dopo VOLANTINO È il valore dello sconto in euro. Leggilo esattamente: "VOLANTINO 17" = €0,17 se sembra centesimi, oppure €17 se il contesto lo giustifica — in generale trattalo come euro con virgola implicita se è un numero intero piccolo (es. 17 → 0,17 €, 49 → 0,49 €, 119 → 1,19 €). Metti questo valore come "discount" del prodotto precedente. Non inventare valori default.
+   Se non c'è un prodotto precedente chiaro, ignorala.
 
 2. PRODOTTI DUPLICATI: Unisci in UN SOLO oggetto SOLO se il prodotto ha ESATTAMENTE lo stesso nome E lo stesso prezzo unitario. Due righe con nomi simili ma prezzi diversi sono prodotti DISTINTI — non unire. Esempio: due righe "CONSILIA STRACC.165G 4% 1,89" identiche → un oggetto con quantity:2, unitPrice:1.89, totalPrice:3.78. Ma "CONSILIA STRACC.165G" e "CONSILIA GOCCE 250G" sono prodotti DIVERSI anche se entrambi "Consilia".
 
-3. TOTALE REALE: Il campo "totalAmount" deve essere il totale EFFETTIVAMENTE PAGATO, cioè il SUBTOTALE meno tutti gli sconti post-subtotale (es. "Sconto 10% AH", "SCONTO SOCI", "SCONTO X%"). Se lo scontrino mostra: SUBTOTALE 16,45 → Sconto 10% AH -1,65 → allora totalAmount = 14,80. Il campo "totalDiscount" include sia gli sconti per articolo sia lo sconto globale. NON usare il SUBTOTALE come totalAmount se ci sono sconti aggiuntivi dopo.
+3. TOTALE REALE: Il campo "totalAmount" deve essere il totale EFFETTIVAMENTE PAGATO, cioè il SUBTOTALE meno tutti gli sconti post-subtotale (es. "Sconto 10% AH", "SCONTO SOCI", "SCONTO X%"). Se lo scontrino mostra: SUBTOTALE 16,45 → Sconto 10% AH -1,65 → allora totalAmount = 14,80. NON usare il SUBTOTALE come totalAmount se ci sono sconti aggiuntivi dopo.
+   Il campo "totalDiscount" include la somma di TUTTI gli sconti (per articolo + globali). Se lo scontrino mostra una riga "RISPARMIATO", "HAI RISPARMIATO", "TOTALE SCONTO" o simile con un importo (es. "-1,19"), usa quel valore come "totalDiscount" (positivo: 1.19). È la fonte più affidabile del risparmio totale — usala quando presente.
 
 3b. NOME NEGOZIO: Leggi l'insegna/brand ESATTAMENTE come è stampato sullo scontrino (es. "IPER TRISCOUNT", "Conad", "Esselunga") — non inventare o correggere l'ortografia. Se è presente anche una ragione sociale generica (es. "SGM Supermercati Srl", "XYZ Srl", "ABC SpA"), combinale: "IPER TRISCOUNT - SGM Supermercati Srl". Se lo scontrino ha SOLO la ragione sociale senza un'insegna riconoscibile, usa solo quella. Priorità: insegna brand > ragione sociale.
 
@@ -113,7 +116,7 @@ REGOLE CRITICHE — seguile nell'ordine:
    - PASSATA MUTT → Passata Mutti
    - PATTATE / PATATTE → "Patate" (correzione ortografica automatica — non scrivere mai "pattate")
    - ACQUA VITAL / ACQUA VITASN / VITASNELLA → "Acqua Vitasnella"
-   - SCHIACCIATINE / SCHIACCIAT → "Schiacciatine"
+   - SCHIACCIATINE / SCHIACCIAT / SCHIACCIATA (se non seguito da altro) → "Schiacciatine" (default — solo se lo scontrino dice esplicitamente "Schiacciata" come prodotto da forno diverso, mantieni "Schiacciata")
    - LENTICCHIE VAPORE → Lenticchie al Vapore
    - SFOGLIAVELO CARNE → Sfogliatelle Velo alla Carne
    - CEREALI T.PETALI CA → Cereali Petali al Cacao

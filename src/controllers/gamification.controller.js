@@ -37,14 +37,14 @@ const POINTS_MAP = {
   referral:      200,
 };
 
+// Premi realmente erogabili dall'owner (nessuna partnership negozi richiesta).
+// Alla riscossione l'utente riceve il premio via email entro 8 ore.
 const VOUCHER_CATALOG = [
-  { id: 'v1', type: 'percent_discount', value: 5,  pointsCost: 200,  description: '5% di sconto sul prossimo acquisto',   storeChain: null,         minLevel: null,       validDays: 30 },
-  { id: 'v2', type: 'percent_discount', value: 10, pointsCost: 450,  description: '10% di sconto su Lidl',                storeChain: 'Lidl',       minLevel: 'silver',   validDays: 14 },
-  { id: 'v3', type: 'fixed_discount',   value: 1,  pointsCost: 150,  description: '€1 di sconto sulla spesa',             storeChain: null,         minLevel: null,       validDays: 30 },
-  { id: 'v4', type: 'fixed_discount',   value: 3,  pointsCost: 400,  description: '€3 di sconto su Esselunga',            storeChain: 'Esselunga',  minLevel: 'silver',   validDays: 21 },
-  { id: 'v5', type: 'fixed_discount',   value: 5,  pointsCost: 700,  description: '€5 di sconto su acquisti >€30',        storeChain: null,         minLevel: 'gold',     validDays: 14 },
-  { id: 'v6', type: 'cashback',         value: 2,  pointsCost: 300,  description: 'Cashback €2 sul prossimo scontrino',   storeChain: null,         minLevel: 'silver',   validDays: 30 },
-  { id: 'v7', type: 'percent_discount', value: 20, pointsCost: 1500, description: '20% di sconto — Offerta Platinum',     storeChain: null,         minLevel: 'platinum', validDays:  7 },
+  { id: 'p1', type: 'premium_days',   value: 30,  pointsCost: 800,  description: '1 mese di Shopora Premium gratis',  storeChain: null, minLevel: null,     validDays: 60 },
+  { id: 'a1', type: 'amazon_voucher', value: 5,   pointsCost: 1500, description: 'Buono Amazon da €5',                 storeChain: null, minLevel: null,     validDays: 90 },
+  { id: 'a2', type: 'amazon_voucher', value: 10,  pointsCost: 3000, description: 'Buono Amazon da €10',                storeChain: null, minLevel: 'silver', validDays: 90 },
+  { id: 'p2', type: 'premium_days',   value: 365, pointsCost: 5000, description: '1 anno di Shopora Premium gratis',  storeChain: null, minLevel: 'gold',   validDays: 90 },
+  { id: 'a3', type: 'amazon_voucher', value: 25,  pointsCost: 7000, description: 'Buono Amazon da €25',                storeChain: null, minLevel: 'gold',   validDays: 90 },
 ];
 
 // Codici voucher validi — whitelist per evitare IDOR su /use
@@ -395,7 +395,40 @@ async function purchaseVoucher(req, res) {
   // Invalida cache leaderboard (punti cambiati)
   await redis.del('leaderboard:top20').catch(() => {});
 
-  return success(res, { voucher, remainingPoints: newBalance }, 201);
+  // Notifica l'owner via email così può consegnare il premio entro 8 ore (fire-and-forget)
+  (async () => {
+    try {
+      const { sendMailWithAttachment } = require('../services/mailer');
+      const u = await prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { email: true, name: true, username: true },
+      });
+      const ownerEmail = process.env.OWNER_EMAIL || process.env.SMTP_USER;
+      if (ownerEmail) {
+        await sendMailWithAttachment(
+          ownerEmail,
+          `🎁 Premio riscattato: ${template.description}`,
+          `<p>Un utente ha riscattato un premio.</p>
+           <ul>
+             <li><b>Premio:</b> ${template.description}</li>
+             <li><b>Codice:</b> ${code}</li>
+             <li><b>Utente:</b> ${u?.name || u?.username || '—'} (${u?.email || '—'})</li>
+             <li><b>Punti spesi:</b> ${template.pointsCost}</li>
+           </ul>
+           <p>Consegna il premio all'utente entro 8 ore.</p>`,
+          null,
+        );
+      }
+    } catch (e) {
+      console.warn('[gamification] owner notify error:', e.message);
+    }
+  })();
+
+  return success(res, {
+    voucher,
+    remainingPoints: newBalance,
+    message: 'Premio riscattato! Lo riceverai via email entro 8 ore.',
+  }, 201);
 }
 
 // ─── POST /api/gamification/vouchers/use ──────────────────────────────────────

@@ -264,6 +264,14 @@ async function scanReceipt(req, res) {
     return error(res, 'Errore durante la lettura dello scontrino', 500);
   }
 
+  // 3b. SANITIZE: l'OCR a volte restituisce la stringa "null"/"N/A" o date non valide.
+  //     Senza questa pulizia il salvataggio crasha (es. new Date("Invalid Date")).
+  parsed.storeName     = cleanStr(parsed.storeName);
+  parsed.storeChain    = cleanStr(parsed.storeChain);
+  parsed.storeAddress  = cleanStr(parsed.storeAddress);
+  parsed.paymentMethod = cleanStr(parsed.paymentMethod);
+  parsed.receiptDate   = cleanDate(parsed.receiptDate);
+
   // 4. Controllo duplicato: stessa data + stesso negozio + stesso totale + stesso n° prodotti
   //    Se esiste già uno scontrino identico, aggiorna i dati ma NON aggiungere punti.
   const items = Array.isArray(parsed.items) ? parsed.items : [];
@@ -306,7 +314,7 @@ async function scanReceipt(req, res) {
           storeName:     parsed.storeName    ?? null,
           storeChain:    parsed.storeChain   ?? null,
           storeAddress:  parsed.storeAddress ?? null,
-          receiptDate:   parsed.receiptDate  ? new Date(parsed.receiptDate) : null,
+          receiptDate:   parsed.receiptDate,   // già Date valida o null (cleanDate)
           totalAmount:   parsed.totalAmount  != null ? parseFloat(parsed.totalAmount)  : null,
           totalDiscount: parsed.totalDiscount != null ? parseFloat(parsed.totalDiscount) : null,
           paymentMethod: parsed.paymentMethod ?? null,
@@ -523,12 +531,44 @@ async function deleteReceipt(req, res) {
  *
  * Dedup case-insensitive sia tra gli item dello scontrino sia con la dispensa.
  */
+// ─── Articoli da NON mettere in dispensa (non sono cibo/scorte) ────────────────
+function isNonPantryItem(name) {
+  const n = name.toLowerCase();
+  const blacklist = [
+    'busta', 'buste', 'shopper', 'sacchetto', 'sacchetti', 'sacco', 'sacchi',
+    'ecologic', 'bio sacc', 'borsa', 'borse', 'shoppers',
+    'sporta', 'cassa', 'spesa di servizio', 'servizio',
+  ];
+  return blacklist.some(w => n.includes(w));
+}
+
+// ─── Categoria automatica per la dispensa (niente più "altro" a tappeto) ───────
+function inferCategory(name) {
+  const n = name.toLowerCase();
+  const map = [
+    ['frutta_verdura', ['mela','mele','banana','pomodor','insalata','patata','patate','cipoll','carota','zucchin','melanzan','pesca','pesche','frutta','verdura','limone','arancia','uva','fragol','spinaci','funghi','champignon','lattuga','finocchi','peperon','broccoli','sedano','zucca']],
+    ['carne_pesce', ['pollo','manzo','bovino','maiale','salsiccia','hamburg','wurstel','prosciutto','salame','speck','mortadella','bresaola','tonno','salmone','merluzzo','pesce','gamber','filetto','arista','tacchino','fettine','macinato','wurstel']],
+    ['latticini', ['latte','formaggio','stracchino','mozzarella','yogurt','burro','panna','ricotta','grana','parmigiano','philadelphia','muller','müller','gorgonzola','mascarpone','uova','uovo']],
+    ['pane_pasta', ['pane','pasta','spaghetti','penne','fusilli','riso','farina','pizza','piadina','pancarre','pancarré','panini','baguette','schiacciat','crackers','fette biscottate','grissini','cereali']],
+    ['bevande', ['acqua','vitasnella','succo','aranciata','coca','cola','birra','vino','tè','the','caffe','caffè','bibita','energy','gassosa','spremuta']],
+    ['dolci_snack', ['biscotti','cioccolat','merendine','snack','caramelle','gelato','torta','crema','nutella','pan di stelle','pandistelle','wafer','barrette','patatine']],
+    ['surgelati', ['surgelat','gelo','freezer','bastoncini','minestrone surgelato']],
+    ['dispensa', ['olio','aceto','sale','zucchero','passata','pelati','legumi','fagioli','lenticchie','ceci','conserve','sugo','pomodoro pelati','spezie','dado','tonno']],
+    ['igiene_casa', ['carta igienica','detersivo','sapone','shampoo','dentifricio','carta cucina','foxy','scottex','ammorbidente','candeggina','spugn']],
+  ];
+  for (const [cat, words] of map) {
+    if (words.some(w => n.includes(w))) return cat;
+  }
+  return 'altro';
+}
+
 async function populatePantryFromReceipt(userId, items) {
   // 1. Aggrega gli item dello scontrino per nome normalizzato (lowercase)
   const byKey = new Map();
   for (const item of items) {
     const name = (item.name || item.rawName || '').trim();
     if (!name) continue;
+    if (isNonPantryItem(name)) continue;   // salta buste, shopper, sacchetti, ecc.
     const key = name.toLowerCase();
     const qty = clampQuantity(item.quantity);
     if (byKey.has(key)) {
@@ -562,7 +602,7 @@ async function populatePantryFromReceipt(userId, items) {
       toCreate.push({
         userId,
         name:     data.name,
-        category: 'altro',
+        category: inferCategory(data.name),
         quantity: data.quantity,
         unit:     'pz',
         barcode:  data.barcode,
@@ -579,6 +619,26 @@ async function populatePantryFromReceipt(userId, items) {
   }
   ops.push(...updates);
   if (ops.length > 0) await prisma.$transaction(ops);
+}
+
+// ─── Pulizia stringhe/date dall'OCR (difesa da "null"/"N/A"/date invalide) ─────
+function cleanStr(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const low = s.toLowerCase();
+  if (low === 'null' || low === 'undefined' || low === 'n/a' || low === 'na' || low === '-') return null;
+  return s;
+}
+function cleanDate(v) {
+  const s = cleanStr(v);
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;       // data non valida → null, niente crash
+  // scarta date assurde (prima del 2000 o oltre 1 anno nel futuro)
+  const year = d.getFullYear();
+  if (year < 2000 || year > new Date().getFullYear() + 1) return null;
+  return d;
 }
 
 // ─── Clamp valori numerici (difesa da OCR sballato) ────────────────────────────

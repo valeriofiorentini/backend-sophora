@@ -26,6 +26,7 @@ const routingRoutes      = require('./routes/routing.routes');
 const finetuningRoutes   = require('./routes/finetuning.routes');
 const pantryRoutes       = require('./routes/pantry.routes');
 const advisorRoutes      = require('./routes/advisor.routes');
+const shoppingListRoutes = require('./routes/shoppingList.routes');
 
 const { errorHandler }      = require('./middleware/errorHandler');
 const { startScheduler }    = require('./services/scraper.service');
@@ -103,6 +104,7 @@ app.use('/api/forecast',       forecastRoutes);
 app.use('/api/routing',        routingRoutes);
 app.use('/api/finetuning',     finetuningRoutes);
 app.use('/api/advisor',        advisorRoutes);
+app.use('/api/shopping-list',  shoppingListRoutes);
 
 // 404 per route non definite
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Endpoint non trovato' }));

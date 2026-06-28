@@ -226,13 +226,40 @@ async function ocrSelfHostedText(imageBase64) {
   return String(text).trim();
 }
 
-// Sceglie la fonte OCR in base a OCR_PROVIDER (default: ocrspace).
+// Divide uno scontrino MOLTO alto in 2 metà sovrapposte, così l'OCR legge anche
+// il fondo (su immagini lunghe l'OCR a volte perde l'ultima parte → totale e
+// risparmiato sbagliati). Richiede 'jimp' (puro JS): npm install jimp@0.22
+// Se jimp non c'è o l'immagine non è lunga, ritorna null (si legge tutta intera).
+async function splitTallImage(imageBase64) {
+  let Jimp;
+  try { Jimp = require('jimp'); } catch { return null; }
+  const b64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+  const img = await Jimp.read(Buffer.from(b64, 'base64'));
+  const w = img.bitmap.width, h = img.bitmap.height;
+  if (h < w * 1.8) return null;                 // non abbastanza lunga: niente split
+  const mid = Math.round(h / 2);
+  const ov  = Math.round(h * 0.06);             // 6% sovrapposizione al centro
+  const top = img.clone().crop(0, 0, w, mid + ov);
+  const bot = img.clone().crop(0, mid - ov, w, h - (mid - ov));
+  const enc = async im => 'data:image/jpeg;base64,' +
+    (await im.quality(82).getBufferAsync(Jimp.MIME_JPEG)).toString('base64');
+  return [await enc(top), await enc(bot)];
+}
+
+// Sceglie la fonte OCR (OCR_PROVIDER) e, per scontrini lunghi, legge in 2 metà.
 async function extractReceiptText(imageBase64) {
   const provider = (process.env.OCR_PROVIDER || 'ocrspace').toLowerCase();
-  if (['selfhosted', 'tesseract', 'paddle', 'http'].includes(provider)) {
-    return ocrSelfHostedText(imageBase64);
+  const ocrOne = img => ['selfhosted', 'tesseract', 'paddle', 'http'].includes(provider)
+    ? ocrSelfHostedText(img) : ocrSpaceText(img);
+
+  let halves = null;
+  try { halves = await splitTallImage(imageBase64); } catch (e) { console.warn('[receipt] split immagine fallito:', e.message); }
+  if (halves) {
+    console.info('[receipt] scontrino lungo → OCR in 2 metà');
+    const [t1, t2] = await Promise.all([ocrOne(halves[0]), ocrOne(halves[1])]);
+    return `${t1}\n=== PARTE 2 (continuazione: le righe SUBITO vicino a questo punto possono ripetersi per la sovrapposizione) ===\n${t2}`.trim();
   }
-  return ocrSpaceText(imageBase64);
+  return ocrOne(imageBase64);
 }
 
 // Prompt che STRUTTURA il testo OCR (già accurato) — non legge immagini.
@@ -244,7 +271,9 @@ REGOLE:
 3. SCONTI: una riga con prezzo NEGATIVO (es. -1,50) o che inizia con "SCONTO"/"VOLANTINO"/"PROMO"/"TAGLIO PREZZO" è uno sconto del prodotto PRECEDENTE → mettilo nel suo "discount" (valore positivo). NON è un item separato.
 4. REPARTI: header come "PANE - 2,09 -" o "GASTRONOMIA - 11,42 -" NON sono prodotti: il prodotto è la riga SOTTO (es. dopo "PANE - 2,09 -" c'è "LARIANO 2,09" → item "Lariano" 2.09). Per la gastronomia usa prefisso "Gastronomia: ".
 5. ESCLUDI: nome operatore/cassiere (es. "DANIELE F."), numero documento, "SUBTOTALE", "TOTALE COMPLESSIVO", "DI CUI IVA", "OFFERTA", "Pagamento", "Importo pagato", righe IVA da sole.
-6. "totalAmount" = TOTALE COMPLESSIVO effettivamente pagato. "totalDiscount" = somma di tutti gli sconti.
+6. TOTALI: "totalAmount" = il numero accanto a "TOTALE COMPLESSIVO" (è il totale pagato; cerca QUESTA riga in fondo). "totalDiscount" = il risparmio totale: somma di TUTTI gli sconti (per articolo + sconti finali tipo "SCONTO 10%"). Se vedi "OFFERTA"/"RISPARMIATO" con un importo, è il risparmio.
+   Se nel testo il fondo manca (niente "TOTALE COMPLESSIVO"), metti totalAmount = null (NON inventare un totale).
+   MARCATORE "=== PARTE 2 … ===": separa due metà della stessa foto. SOLO le righe immediatamente intorno a quel marcatore possono essere ripetute per la sovrapposizione: in quel punto includi ogni prodotto UNA volta sola. ATTENZIONE: altrove i duplicati sono VERI (es. "GRANAROLO STRACCHINO 2,19" due volte = 2 prodotti distinti) → NON eliminarli.
 7. Includi TUTTI i prodotti con un prezzo (anche buste/sacchetti). Non saltarne nessuno.
 8. CATEGORIA — per ogni prodotto aggiungi "category" scegliendo ESATTAMENTE una di queste 10 (servono per la dispensa): frutta_verdura, carne_pesce, latticini, pane_pasta, bevande, dolci_snack, surgelati, dispensa, igiene_casa, altro.
    Esempi: Banane/Rucola/Cetrioli/Albicocche→frutta_verdura; Prosciutto/Mortadella/Bacon/Saltimbocca/Tonno→carne_pesce; Parmalat/Yogurt/Stracchino/Edamer/Uova/Müller→latticini; Lariano/Pane/Crostata→pane_pasta; Yoga Succo/Acqua/Nescafe/The→bevande; Kinder→dolci_snack; Frosta Fishburger/surgelati→surgelati; Olio/Sale/Pomodoro/Conserve→dispensa; Detersivo/Carta igienica→igiene_casa. Se davvero incerto: altro.
@@ -431,6 +460,13 @@ async function scanReceipt(req, res) {
     return true;
   });
   parsed.items = items;
+
+  // 3d. RISPARMIATO: garantisci che totalDiscount sia ALMENO la somma degli sconti
+  //     per riga (l'LLM a volte lo sottostima). Se l'LLM ha un valore più alto
+  //     (perché ha letto anche lo sconto finale tipo "SCONTO 10%"), tieni il suo.
+  const itemDiscSum = items.reduce((a, i) => a + (parseFloat(i.discount) || 0), 0);
+  const llmDisc = parseFloat(parsed.totalDiscount) || 0;
+  parsed.totalDiscount = Math.round(Math.max(llmDisc, itemDiscSum) * 100) / 100;
 
   // 4. Controllo duplicato: stessa data + stesso negozio + stesso totale + stesso n° prodotti
   //    Se esiste già uno scontrino identico, aggiorna i dati ma NON aggiungere punti.

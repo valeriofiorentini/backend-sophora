@@ -111,6 +111,9 @@ REGOLE CRITICHE — seguile nell'ordine:
    - FATT.ULIV OLIO EVO → Olio Extra Vergine di Oliva Frantoi Ulivi
    - MANT OLIO EX.V. EQ → Olio Extra Vergine Equosolidale
    - PASSATA MUTT → Passata Mutti
+   - PATTATE / PATATTE → "Patate" (correzione ortografica automatica — non scrivere mai "pattate")
+   - ACQUA VITAL / ACQUA VITASN / VITASNELLA → "Acqua Vitasnella"
+   - SCHIACCIATINE / SCHIACCIAT → "Schiacciatine"
    - LENTICCHIE VAPORE → Lenticchie al Vapore
    - SFOGLIAVELO CARNE → Sfogliatelle Velo alla Carne
    - CEREALI T.PETALI CA → Cereali Petali al Cacao
@@ -120,7 +123,8 @@ REGOLE CRITICHE — seguile nell'ordine:
    - CANNAMELA → Cannamela (spezie, mantieni il nome)
    - Prefisso "T " sugli scontrini PAM = indicatore IVA, ignoralo nel nome prodotto
 
-4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto (es. POLLO ARROSTO) sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome (es. "Gastronomia: Pollo Arrosto").
+4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome.
+   Esempi gastronomia: POLLO ARR → "Gastronomia: Pollo Arrosto", PATATE ARR / PATTATE ARR / PAT.ARROSTO → "Gastronomia: Patate Arrosto" (NON "Pattate"), LASAGNE → "Gastronomia: Lasagne", ARISTA → "Gastronomia: Arista".
 
 5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio.
    INCLUDI sempre shopper e sacchetti anche se costano poco (es. "SHOPPER MAT-BIO €0,12") — l'utente vuole vedere tutto quello che ha pagato.

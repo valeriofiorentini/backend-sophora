@@ -514,7 +514,7 @@ async function getPlanUsage(req, res) {
       select: { isSubscribed: true, name: true, email: true },
     }),
     prisma.receipt.count({
-      where: { userId, createdAt: { gte: startOfMonth } },
+      where: { userId, processedAt: { gte: startOfMonth } },
     }),
     prisma.chatMessage.count({
       where: { role: 'user', createdAt: { gte: startOfDay }, session: { userId } },

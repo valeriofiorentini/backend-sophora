@@ -31,6 +31,7 @@ router.post('/refresh', asyncHandler(c.refreshTokenHandler));
 router.use(auth);
 
 router.get('/me',                                               asyncHandler(c.getProfile));
+router.get('/plan-usage',                                       asyncHandler(c.getPlanUsage));
 router.patch('/edit-profile', upload.single('avatar'),         asyncHandler(c.editProfile));
 router.patch('/changePasswordByOldPassword', changePasswordLimit, asyncHandler(c.changePasswordByOldPassword));
 router.delete('/delete-account',                               asyncHandler(c.deleteAccount));

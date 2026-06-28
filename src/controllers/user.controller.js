@@ -497,6 +497,59 @@ function sanitizeUser(user) {
   return rest;
 }
 
+// ─── GET /api/user/plan-usage ─────────────────────────────────────────────────
+async function getPlanUsage(req, res) {
+  const userId = req.userId;
+
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const [user, receiptsThisMonth, chatToday] = await Promise.all([
+    prisma.user.findUnique({
+      where:  { id: userId },
+      select: { isSubscribed: true, name: true, email: true },
+    }),
+    prisma.receipt.count({
+      where: { userId, createdAt: { gte: startOfMonth } },
+    }),
+    prisma.chatMessage.count({
+      where: { role: 'user', createdAt: { gte: startOfDay }, session: { userId } },
+    }),
+  ]);
+
+  const isPremium = !!user?.isSubscribed;
+
+  return success(res, {
+    plan:              isPremium ? 'Premium' : 'Free',
+    isPremium,
+    receipts: {
+      used:  receiptsThisMonth,
+      limit: isPremium ? null : 10,
+    },
+    chat: {
+      used:  chatToday,
+      limit: isPremium ? null : 15,
+    },
+    features: [
+      { label: 'Scansiona scontrini',              unlocked: true },
+      { label: 'Dove risparmi',                    unlocked: true },
+      { label: 'Assistente AI',                    unlocked: true },
+      { label: 'Budget mensile',                   unlocked: true },
+      { label: 'Spesa di gruppo',                  unlocked: true },
+      { label: 'Previsione prezzi',                unlocked: true },
+      { label: 'Cosa dimenticavi di comprare',     unlocked: isPremium },
+      { label: 'Percorso ottimale tra negozi',     unlocked: isPremium },
+      { label: 'Avvisi prezzo in aumento',         unlocked: isPremium },
+      { label: 'Domande AI illimitate',            unlocked: isPremium },
+      { label: 'Export storia spesa via email',    unlocked: isPremium },
+    ],
+  });
+}
+
 module.exports = {
   signup,
   login,
@@ -509,6 +562,7 @@ module.exports = {
   changePasswordByOldPassword,
   editProfile,
   getProfile,
+  getPlanUsage,
   refreshTokenHandler,
   logout,
   deleteAccount,

@@ -92,6 +92,10 @@ const RECEIPT_PROMPT = `Sei un esperto di scontrini italiani. Analizza l'immagin
 
 REGOLE CRITICHE — seguile nell'ordine:
 
+⛔ REGOLA -1 — COSA LEGGERE: Leggi ESCLUSIVAMENTE la striscia di carta dello SCONTRINO. IGNORA TOTALMENTE tutto il resto nell'immagine: quaderni, fogli a quadretti, appunti o formule scritte a mano, libri, tavoli, mani, oggetti sullo sfondo. Se vedi testo scritto a mano, quadretti, disegni, formule matematiche → NON fanno parte dello scontrino, NON includerli come prodotti (es. NON inventare "Blocco Note", "Quaderno", ecc.). Ogni prodotto DEVE provenire da una riga stampata sullo scontrino.
+
+⛔ REGOLA 0 — FEDELTÀ ASSOLUTA AI MARCHI: Trascrivi i nomi ESATTAMENTE come sono stampati. NON sostituire MAI un marchio poco noto con uno più famoso o "più probabile". Errori GRAVISSIMI da NON fare mai: "FROSTA" → "Findus" (SBAGLIATO: resta Frosta), "LARIANO" → "Laranjina" (SBAGLIATO: resta Lariano), "CONSILIA" → "Benedetta" (SBAGLIATO: resta Consilia), "C.M.MEZZE NOCI" → "Mezze Penne" (SBAGLIATO: sono noci, non penne). Se non riconosci un marchio o una parola, lasciala IDENTICA a com'è stampata. NON indovinare, NON "correggere" verso qualcosa di più comune.
+
 0. COLONNE SCONTRINO: Lo scontrino italiano ha tipicamente 3 colonne: DESCRIZIONE | IVA% | Prezzo(€). La colonna IVA contiene percentuali come "4,00%", "10,00%", "22,00%" — NON sono prezzi! Il prezzo è SEMPRE l'ultimo numero sulla riga, nella colonna Prezzo(€). Non confondere mai la percentuale IVA con il prezzo del prodotto.
 
    ESEMPIO CRITICO — scontrino PIM/Coop/Conad con colonne:

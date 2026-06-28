@@ -76,9 +76,9 @@ async function callOcrApi(model, messages) {
     model,
     messages,
     response_format: { type: 'json_object' },
-    // 16000 token: anche scontrini lunghissimi stanno dentro senza troncare il JSON.
+    // 8000 token: uno scontrino con ~90 prodotti sta dentro senza troncare il JSON.
     // Con 4000 gli scontrini lunghi (60+ righe) venivano tagliati a metà → output corrotto.
-    max_tokens: 16000,
+    max_tokens: 8000,
     // temperature 0: estrazione deterministica, l'LLM NON inventa né traduce i nomi
     // (es. "BANANE" restava "BANANE", non diventava "Bananes").
     temperature: 0,

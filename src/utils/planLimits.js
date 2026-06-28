@@ -32,8 +32,9 @@ async function checkReceiptLimit(userId) {
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
 
+  // Receipt usa processedAt (non createdAt)
   const used = await prisma.receipt.count({
-    where: { userId, createdAt: { gte: startOfMonth } },
+    where: { userId, processedAt: { gte: startOfMonth } },
   });
 
   return {

@@ -1,0 +1,18 @@
+# Microservizio OCR (PaddleOCR) — INDIPENDENTE dal backend.
+# Il backend gira via PM2 sull'host e raggiunge questo servizio su 127.0.0.1:8868.
+#
+# Avvio:   cd ocr-service && docker compose up -d --build
+# Logs:    docker compose logs -f
+# Stop:    docker compose down
+services:
+  ocr:
+    build: .
+    container_name: shopora-ocr
+    ports:
+      - "127.0.0.1:8868:8868"   # raggiungibile solo dall'host, non da internet
+    restart: unless-stopped
+    # PaddleOCR vuole un po' di RAM; alza/abbassa secondo la tua VPS
+    deploy:
+      resources:
+        limits:
+          memory: 2g

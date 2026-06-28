@@ -12,6 +12,7 @@
  */
 
 const OpenAI  = require('openai');
+const axios   = require('axios');
 const prisma  = require('../config/database');
 const { uploadToS3 }  = require('../config/s3');
 const { success, error } = require('../utils/response');
@@ -177,6 +178,74 @@ Struttura JSON da restituire:
   "paymentMethod": "contanti/carta/buono pasto/misto o null"
 }`;
 
+// ─── OCR dedicato (OCR.space) → testo esatto → LLM struttura ──────────────────
+// Gli LLM vision "indovinano" sui nomi (Frosta→Findus). Un OCR vero legge i
+// caratteri ESATTI. Poi l'LLM struttura SOLO il testo (non l'immagine) → niente
+// allucinazioni. Chiave gratuita: registrala su https://ocr.space/ocrapi e
+// mettila in OCRSPACE_API_KEY (fallback 'helloworld' per i test).
+async function ocrSpaceText(imageBase64) {
+  const params = new URLSearchParams();
+  params.append('apikey', process.env.OCRSPACE_API_KEY || 'helloworld');
+  params.append('base64Image', imageBase64);   // data:image/...;base64,...
+  params.append('language', 'ita');
+  params.append('OCREngine', '2');               // engine 2 = migliore su scontrini
+  params.append('scale', 'true');
+  params.append('isTable', 'true');
+  const r = await axios.post('https://api.ocr.space/parse/image', params.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 30000, maxContentLength: Infinity, maxBodyLength: Infinity,
+  });
+  if (r.data?.IsErroredOnProcessing) {
+    throw new Error('OCR.space: ' + JSON.stringify(r.data.ErrorMessage));
+  }
+  return (r.data?.ParsedResults || []).map(p => p.ParsedText || '').join('\n').trim();
+}
+
+// Prompt che STRUTTURA il testo OCR (già accurato) — non legge immagini.
+const STRUCTURE_PROMPT = `Ti do il TESTO GREZZO di uno scontrino italiano, già letto da un OCR affidabile. Il tuo compito è SOLO STRUTTURARLO in JSON. Restituisci SOLO JSON valido.
+
+REGOLE:
+1. NON cambiare i nomi: copia "name" ESATTAMENTE come appare nel testo (al massimo espandi una troncatura ovvia, es. "PROSC."→"Prosciutto"). MAI inventare o sostituire marchi (Frosta resta Frosta, Yoga resta Yoga).
+2. Ogni riga prodotto è: DESCRIZIONE … IVA% … PREZZO. Il PREZZO è l'ULTIMO numero della riga (es. 3,79). La % IVA (4,00% / 10,00% / 22,00%) NON è un prezzo.
+3. SCONTI: una riga con prezzo NEGATIVO (es. -1,50) o che inizia con "SCONTO"/"VOLANTINO"/"PROMO"/"TAGLIO PREZZO" è uno sconto del prodotto PRECEDENTE → mettilo nel suo "discount" (valore positivo). NON è un item separato.
+4. REPARTI: header come "PANE - 2,09 -" o "GASTRONOMIA - 11,42 -" NON sono prodotti: il prodotto è la riga SOTTO (es. dopo "PANE - 2,09 -" c'è "LARIANO 2,09" → item "Lariano" 2.09). Per la gastronomia usa prefisso "Gastronomia: ".
+5. ESCLUDI: nome operatore/cassiere (es. "DANIELE F."), numero documento, "SUBTOTALE", "TOTALE COMPLESSIVO", "DI CUI IVA", "OFFERTA", "Pagamento", "Importo pagato", righe IVA da sole.
+6. "totalAmount" = TOTALE COMPLESSIVO effettivamente pagato. "totalDiscount" = somma di tutti gli sconti.
+7. Includi TUTTI i prodotti con un prezzo (anche buste/sacchetti). Non saltarne nessuno.
+8. Se un dato manca, usa null. Stessa identica struttura JSON del formato qui sotto.
+
+Struttura JSON: {"storeName":"…","storeChain":"… o null","storeAddress":"… o null","receiptDate":"YYYY-MM-DD o null","items":[{"name":"…","rawName":"riga grezza","quantity":1,"unitPrice":0.00,"totalPrice":0.00,"discount":0.00}],"totalAmount":0.00,"totalDiscount":0.00,"paymentMethod":"… o null"}`;
+
+// Pipeline completa: OCR.space → struttura con LLM. Ritorna il JSON parsato, o
+// null se OCR.space non è disponibile (così il chiamante usa il vision OCR).
+async function tryOcrSpacePipeline(imageBase64) {
+  let text;
+  try {
+    text = await ocrSpaceText(imageBase64);
+  } catch (e) {
+    console.warn('[receipt] OCR.space non disponibile:', e.message);
+    return null;
+  }
+  if (!text || text.replace(/\s/g, '').length < 40) {
+    console.warn('[receipt] OCR.space testo troppo corto → fallback vision');
+    return null;
+  }
+  console.info(`[receipt] OCR.space OK (${text.length} char) → struttura con LLM`);
+  const messages = [{ role: 'user', content: `${STRUCTURE_PROMPT}\n\nTESTO SCONTRINO:\n"""\n${text}\n"""` }];
+  try {
+    let resp;
+    try {
+      resp = await callOcrApi(OCR_MODEL_ACCURATE, messages);
+    } catch {
+      resp = await callOcrApi(OCR_MODEL_FALLBACK, messages);
+    }
+    return parseOcrJson(resp.choices[0].message.content);
+  } catch (e) {
+    console.warn('[receipt] strutturazione OCR.space fallita → fallback vision:', e.message);
+    return null;
+  }
+}
+
 // ─── POST /api/receipts/scan ───────────────────────────────────────────────────
 async function scanReceipt(req, res) {
   if (!req.file) return error(res, 'Immagine scontrino obbligatoria');
@@ -217,6 +286,12 @@ async function scanReceipt(req, res) {
   //    Se è disponibile un fine-tuned model, usa direttamente quello.
   let parsed;
   try {
+    // ── PASSO 1: OCR dedicato (OCR.space) legge il testo ESATTO → LLM struttura.
+    //    È il metodo affidabile: l'LLM non vede l'immagine, quindi non inventa nomi.
+    parsed = await tryOcrSpacePipeline(imageBase64);
+
+    // ── PASSO 2: se OCR.space non è disponibile, fallback al vision OCR (come prima).
+    if (!parsed) {
     const fineTunedModel = await getOcrModel(); // null = nessun fine-tuned disponibile
     const messages = [{
       role: 'user',
@@ -287,6 +362,7 @@ async function scanReceipt(req, res) {
     } else {
       parsed = parsedFirst;
     }
+    } // fine fallback vision OCR (if !parsed)
   } catch (ocrErr) {
     console.error('[receipt] OCR error:', ocrErr.message);
     await prisma.receipt.update({

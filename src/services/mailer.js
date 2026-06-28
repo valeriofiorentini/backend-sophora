@@ -11,18 +11,24 @@ const nodemailer = require('nodemailer');
 
 let _transporter = null;
 
+// Supporta sia SMTP_USER/SMTP_PASS (naming vecchio) che EMAIL_USER/EMAIL_PASS
+const smtpUser = () => process.env.SMTP_USER || process.env.EMAIL_USER;
+const smtpPass = () => process.env.SMTP_PASS || process.env.EMAIL_PASS;
+
 function getTransporter() {
   if (_transporter) return _transporter;
 
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    throw new Error('SMTP_USER e SMTP_PASS non configurati nel .env');
+  if (!smtpUser() || !smtpPass()) {
+    throw new Error('Variabili email non configurate nel .env (EMAIL_USER/EMAIL_PASS)');
   }
 
   _transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port:   parseInt(process.env.EMAIL_PORT || '587'),
+    secure: false,
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+      user: smtpUser(),
+      pass: smtpPass(),
     },
   });
 
@@ -39,7 +45,7 @@ function getTransporter() {
 async function sendMailWithAttachment(to, subject, html, attachment) {
   const transporter = getTransporter();
   await transporter.sendMail({
-    from:    process.env.SMTP_FROM || process.env.SMTP_USER,
+    from:    process.env.EMAIL_FROM || process.env.SMTP_FROM || smtpUser(),
     to,
     subject,
     html,

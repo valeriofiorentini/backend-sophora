@@ -154,7 +154,12 @@ REGOLE CRITICHE — seguile nell'ordine:
    - Prefisso "T " sugli scontrini PAM = indicatore IVA, ignoralo nel nome prodotto
 
 4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome.
-   Esempi gastronomia: POLLO ARR → "Gastronomia: Pollo Arrosto", PATATE ARR / PATTATE ARR / PAT.ARROSTO → "Gastronomia: Patate Arrosto" (NON "Pattate"), LASAGNE → "Gastronomia: Lasagne", ARISTA → "Gastronomia: Arista".
+   ATTENZIONE — possono esserci PIÙ sezioni "GASTRONOMIA - X,XX -" CONSECUTIVE, ognuna con il proprio header di prezzo e il proprio prodotto. Sono articoli DISTINTI: includili TUTTI, uno per ogni header. Esempio reale:
+     "GASTRONOMIA - 7,99 -" → "POLLO ARROSTO 7,99"      → item "Gastronomia: Pollo Arrosto" 7.99
+     "GASTRONOMIA - 2,99 -" → "PATATE ARROSTO 2,99"     → item "Gastronomia: Patate Arrosto" 2.99
+     "GASTRONOMIA - 2,79 -" → "CIPOLLINE BORETTANE 2,79"→ item "Gastronomia: Cipolline Borettane" 2.79
+   NON saltare quella in mezzo: ogni header "GASTRONOMIA - X,XX -" corrisponde a un prodotto da includere.
+   Esempi nomi gastronomia: POLLO ARR → "Gastronomia: Pollo Arrosto", PATATE ARR / PATTATE ARR / PAT.ARROSTO → "Gastronomia: Patate Arrosto" (NON "Pattate"), LASAGNE → "Gastronomia: Lasagne", ARISTA → "Gastronomia: Arista", CIPOLLINE BORETTANE → "Gastronomia: Cipolline Borettane".
 
 5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio.
    INCLUDI sempre shopper e sacchetti anche se costano poco (es. "SHOPPER MAT-BIO €0,12") — l'utente vuole vedere tutto quello che ha pagato.
@@ -264,15 +269,19 @@ async function scanReceipt(req, res) {
       parsedFirst = null;
     }
 
-    // Validazione somma item vs totalAmount: se discrepanza >5% o JSON malformato → fallback modello diverso
+    // Validazione somma item vs totalAmount: se discrepanza >5% o JSON malformato → fallback modello diverso.
+    // Confronta la somma NETTA (totalPrice - sconto per riga) col totale netto:
+    // prima confrontava il lordo col netto → falsi fallback sugli scontrini scontati
+    // e mascherava gli item davvero saltati.
     const needsFallback = !parsedFirst || (() => {
       const items = Array.isArray(parsedFirst.items) ? parsedFirst.items : [];
-      const sumItems = items.reduce((acc, i) => acc + (parseFloat(i.totalPrice) || 0), 0);
+      const sumItems = items.reduce((acc, i) =>
+        acc + (parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0), 0);
       const total = parseFloat(parsedFirst.totalAmount) || 0;
       if (total <= 0 || items.length === 0) return false;
       const diff = Math.abs(sumItems - total) / total;
       if (diff > 0.05) {
-        console.warn(`[receipt] somma item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}% → fallback ${OCR_MODEL_FALLBACK}`);
+        console.warn(`[receipt] somma netta item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}% → fallback ${OCR_MODEL_FALLBACK}`);
         return true;
       }
       return false;
@@ -284,7 +293,7 @@ async function scanReceipt(req, res) {
         ...messages,
         ...(parsedFirst ? [
           { role: 'assistant', content: rawContent },
-          { role: 'user', content: 'La somma dei prezzi degli item non corrisponde al totalAmount. Rileggi attentamente ogni riga del prezzo nella colonna PREZZO(€) e restituisci il JSON corretto.' },
+          { role: 'user', content: 'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.' },
         ] : [
           { role: 'assistant', content: rawContent },
           { role: 'user', content: 'Il JSON precedente è malformato. Restituisci SOLO il JSON corretto senza markdown, backtick o testo extra.' },

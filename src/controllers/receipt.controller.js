@@ -170,7 +170,8 @@ Struttura JSON da restituire:
       "unitPrice": 0.00,
       "totalPrice": 0.00,
       "discount": 0.00,
-      "discountPercent": null
+      "discountPercent": null,
+      "category": "una tra: frutta_verdura, carne_pesce, latticini, pane_pasta, bevande, dolci_snack, surgelati, dispensa, igiene_casa, altro"
     }
   ],
   "totalAmount": 0.00,
@@ -212,9 +213,11 @@ REGOLE:
 5. ESCLUDI: nome operatore/cassiere (es. "DANIELE F."), numero documento, "SUBTOTALE", "TOTALE COMPLESSIVO", "DI CUI IVA", "OFFERTA", "Pagamento", "Importo pagato", righe IVA da sole.
 6. "totalAmount" = TOTALE COMPLESSIVO effettivamente pagato. "totalDiscount" = somma di tutti gli sconti.
 7. Includi TUTTI i prodotti con un prezzo (anche buste/sacchetti). Non saltarne nessuno.
-8. Se un dato manca, usa null. Stessa identica struttura JSON del formato qui sotto.
+8. CATEGORIA — per ogni prodotto aggiungi "category" scegliendo ESATTAMENTE una di queste 10 (servono per la dispensa): frutta_verdura, carne_pesce, latticini, pane_pasta, bevande, dolci_snack, surgelati, dispensa, igiene_casa, altro.
+   Esempi: Banane/Rucola/Cetrioli/Albicocche→frutta_verdura; Prosciutto/Mortadella/Bacon/Saltimbocca/Tonno→carne_pesce; Parmalat/Yogurt/Stracchino/Edamer/Uova/Müller→latticini; Lariano/Pane/Crostata→pane_pasta; Yoga Succo/Acqua/Nescafe/The→bevande; Kinder→dolci_snack; Frosta Fishburger/surgelati→surgelati; Olio/Sale/Pomodoro/Conserve→dispensa; Detersivo/Carta igienica→igiene_casa. Se davvero incerto: altro.
+9. Se un dato manca, usa null. Stessa identica struttura JSON del formato qui sotto.
 
-Struttura JSON: {"storeName":"…","storeChain":"… o null","storeAddress":"… o null","receiptDate":"YYYY-MM-DD o null","items":[{"name":"…","rawName":"riga grezza","quantity":1,"unitPrice":0.00,"totalPrice":0.00,"discount":0.00}],"totalAmount":0.00,"totalDiscount":0.00,"paymentMethod":"… o null"}`;
+Struttura JSON: {"storeName":"…","storeChain":"… o null","storeAddress":"… o null","receiptDate":"YYYY-MM-DD o null","items":[{"name":"…","rawName":"riga grezza","quantity":1,"unitPrice":0.00,"totalPrice":0.00,"discount":0.00,"category":"una delle 10"}],"totalAmount":0.00,"totalDiscount":0.00,"paymentMethod":"… o null"}`;
 
 // Pipeline completa: OCR.space → struttura con LLM. Ritorna il JSON parsato, o
 // null se OCR.space non è disponibile (così il chiamante usa il vision OCR).
@@ -460,7 +463,7 @@ async function scanReceipt(req, res) {
             totalPrice:      clampPrice(item.totalPrice),
             discount:        item.discount        != null ? clampPrice(item.discount)        : null,
             discountPercent: item.discountPercent != null ? clampPercent(item.discountPercent) : null,
-            category:        null,
+            category:        VALID_CATEGORIES.has(item.category) ? item.category : null,
           })),
           skipDuplicates: true,
         });
@@ -665,11 +668,18 @@ function isNonPantryItem(name) {
   return blacklist.some(w => n.includes(w));
 }
 
+// Categorie valide per la dispensa (devono combaciare col frontend pantryScanner)
+const VALID_CATEGORIES = new Set([
+  'frutta_verdura', 'carne_pesce', 'latticini', 'pane_pasta', 'bevande',
+  'dolci_snack', 'surgelati', 'dispensa', 'igiene_casa', 'altro',
+]);
+
 // ─── Categoria automatica per la dispensa (niente più "altro" a tappeto) ───────
 // Usa STEM (radici) e non parole intere: "banan" copre banana/banane, "albicocc"
 // copre albicocca/albicocche, ecc. Così plurali e nomi alterati dall'OCR matchano.
 // L'ORDINE conta: le categorie con possibili collisioni (bevande, latticini, carne)
 // sono prima di frutta_verdura per evitare es. "aranciata"→frutta o "uova"→altro.
+// (Usato come fallback quando l'LLM non fornisce una categoria valida.)
 function inferCategory(name) {
   const n = name.toLowerCase();
   const map = [
@@ -723,7 +733,7 @@ async function populatePantryFromReceipt(userId, items) {
     if (byKey.has(key)) {
       byKey.get(key).quantity += qty;
     } else {
-      byKey.set(key, { name, quantity: qty, barcode: item.barcode ?? null });
+      byKey.set(key, { name, quantity: qty, barcode: item.barcode ?? null, category: item.category ?? null });
     }
   }
   if (byKey.size === 0) return;
@@ -751,7 +761,8 @@ async function populatePantryFromReceipt(userId, items) {
       toCreate.push({
         userId,
         name:     data.name,
-        category: inferCategory(data.name),
+        // categoria dall'LLM se valida, altrimenti dedotta dal nome (keyword)
+        category: VALID_CATEGORIES.has(data.category) ? data.category : inferCategory(data.name),
         quantity: data.quantity,
         unit:     'pz',
         barcode:  data.barcode,

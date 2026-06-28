@@ -106,9 +106,10 @@ REGOLE CRITICHE — seguile nell'ordine:
 
    ATTENZIONE PREZZI: Se un prezzo inizia con "4" o "4,xx" o "4.xx" verifica attentamente che non sia una lettura errata del "1" iniziale (es. "1,79" che sembra "4,79" su foto storta). Controlla sempre la coerenza col totale finale.
 
-1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "VOLANTINO", "VOLANTINO XX" (dove XX è il numero dello sconto in centesimi o euro), "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic.", "Taglio Prezzo", "TAGLIO PREZZO", "Articolo prezzo fisso", "ARTICOLO PREZZO FISSO", "Sconto 10% AH", "SCONTO AH", "sconto soci" ecc., quella riga è uno SCONTO/RIDUZIONE, NON un prodotto. Mettila nel campo "discount" del prodotto precedente con valore positivo (es. 1.30, non -1.30), NON come prodotto separato.
-   REGOLA "VOLANTINO XX": il numero dopo VOLANTINO (es. "VOLANTINO 17") è il CODICE/NUMERO dell'offerta volantino — NON è l'importo dello sconto. L'importo dello sconto è sempre il valore nella colonna Prezzo(€) sulla stessa riga, che sarà negativo (es. -1,19). Usa quel valore come "discount" del prodotto precedente (positivo: 1.19). Ignora completamente il numero che segue VOLANTINO.
-   Se non c'è un prodotto precedente chiaro, ignorala.
+1. SCONTI SU RIGA SEPARATA — REGOLA CRITICA: una riga è uno SCONTO (non un prodotto) quando ha queste caratteristiche: il PREZZO è NEGATIVO (es. -1,19) OPPURE il testo inizia con parole come "SCONTO", "TAGLIO PREZZO", "VOLANTINO", "PROMO", "RIDUZIONE", "ARTICOLO PREZZO FISSO".
+   Uno sconto NON è MAI un item dell'array "items". Va sommato nel campo "discount" del PRODOTTO PRECEDENTE (valore positivo: -1,19 → discount 1.19).
+   ⛔ NON inventare righe sconto: includi SOLO gli sconti che vedi DAVVERO stampati su QUESTO scontrino, con il loro importo reale. Non creare "items" con nome "Sconto…"/"Taglio Prezzo"/"Volantino" e prezzo 0. Se non c'è un prodotto precedente chiaro, ignora la riga.
+   REGOLA "VOLANTINO XX": il numero dopo VOLANTINO (es. "VOLANTINO 17") è il CODICE dell'offerta, NON l'importo. L'importo è il valore negativo nella colonna Prezzo(€) sulla stessa riga.
 
 2. PRODOTTI DUPLICATI: Unisci in UN SOLO oggetto SOLO se il prodotto ha ESATTAMENTE lo stesso nome E lo stesso prezzo unitario. Due righe con nomi simili ma prezzi diversi sono prodotti DISTINTI — non unire. Esempio: due righe "CONSILIA STRACC.165G 4% 1,89" identiche → un oggetto con quantity:2, unitPrice:1.89, totalPrice:3.78. Ma "CONSILIA STRACC.165G" e "CONSILIA GOCCE 250G" sono prodotti DIVERSI anche se entrambi "Consilia".
 
@@ -321,9 +322,24 @@ async function scanReceipt(req, res) {
   parsed.paymentMethod = cleanStr(parsed.paymentMethod);
   parsed.receiptDate   = cleanDate(parsed.receiptDate);
 
+  // 3c. SANITIZE ITEMS: il modello a volte produce FINTE righe "sconto" come se
+  //     fossero prodotti (es. "Sconto Soci", "Taglio Prezzo", "Volantino" con prezzo 0)
+  //     — a volte rigurgita persino gli esempi dal prompt. Gli sconti veri sono già
+  //     nel campo discount dei prodotti reali: queste pseudo-righe vanno rimosse.
+  const DISCOUNT_LABEL = /^\s*(scont|tagli\s*prezz|articolo\s*prezzo\s*fisso|volantin|promo\b|offert|riduzion|buono\s*sconto|sconto\s*reparti)/i;
+  const items = (Array.isArray(parsed.items) ? parsed.items : []).filter(it => {
+    const name = (it?.name || it?.rawName || '').trim();
+    if (!name) return false;                         // niente nome → scarta
+    const price = parseFloat(it?.totalPrice);
+    // È una riga-sconto se il nome è un'etichetta di sconto E non ha un prezzo
+    // prodotto valido (>0). I prodotti veri hanno sempre un prezzo positivo.
+    if (DISCOUNT_LABEL.test(name) && (!Number.isFinite(price) || price <= 0)) return false;
+    return true;
+  });
+  parsed.items = items;
+
   // 4. Controllo duplicato: stessa data + stesso negozio + stesso totale + stesso n° prodotti
   //    Se esiste già uno scontrino identico, aggiorna i dati ma NON aggiungere punti.
-  const items = Array.isArray(parsed.items) ? parsed.items : [];
   let isDuplicate = false;
 
   if (parsed.receiptDate && (parsed.storeChain || parsed.storeName) && parsed.totalAmount) {

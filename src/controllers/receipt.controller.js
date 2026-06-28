@@ -28,15 +28,18 @@ const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/he
 
 // ─── Modelli OCR ──────────────────────────────────────────────────────────────
 // Siamo su OpenRouter → possiamo scegliere qualsiasi modello.
-// Per l'OCR scontrini serve il miglior modello VISION: Gemini 2.5 Pro è top per
-// OCR di documenti (foto storte, scontrini lunghi 60+ righe, testo italiano) ed
-// ha un output molto ampio. gpt-4o resta come secondo parere (fallback su modello
-// diverso). Tutto override-abile via env: OCR_MODEL / OCR_MODEL_FALLBACK.
+// Scelta: gpt-4o come primario. Testato sul campo (key di produzione):
+//   - openai/gpt-4o          → ~900ms, JSON sempre pulito, vision forte ✓
+//   - google/gemini-2.5-pro  → ~4s, è un "thinking model": brucia token nel
+//                              ragionamento, lento e a volte tronca il JSON ✗
+//   - google/gemini-2.5-flash→ veloce ma sempre thinking, meno prevedibile
+// Il problema originale era gpt-4o-MINI (debole), non gpt-4o. gpt-4o risolve
+// accuratezza ed è affidabile. Override via env: OCR_MODEL / OCR_MODEL_FALLBACK.
 const ON_OPENROUTER      = !!process.env.OPENROUTER_API_KEY;
 const OCR_MODEL_ACCURATE = process.env.OCR_MODEL
-  || (ON_OPENROUTER ? 'google/gemini-2.5-pro' : 'gpt-4o');   // primario (massima precisione)
+  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');           // primario (provato e affidabile)
 const OCR_MODEL_FALLBACK = process.env.OCR_MODEL_FALLBACK
-  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');           // secondo parere su modello diverso
+  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');           // secondo passaggio con hint correzione
 const OCR_MODEL_FAST     = OCR_MODEL_ACCURATE;               // retrocompat (non più mini)
 
 // Parser JSON robusto: modelli diversi a volte avvolgono l'output in ```json … ```

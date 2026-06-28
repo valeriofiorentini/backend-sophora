@@ -464,9 +464,8 @@ async function getHealthAdvice(req, res) {
  * con pochi dati.
  */
 async function getAssociations(req, res) {
-  if (!await isPremium(req.userId)) {
-    return error(res, 'I suggerimenti "cosa stai dimenticando" sono una funzione Premium. Abbonati a Shopora Premium.', 403);
-  }
+  // Per ora i consigli spesa sono gratuiti per tutti (anche utenti free).
+  // Riattivare il gate Premium qui quando la base utenti sarà più ampia.
 
   const userId = req.userId;
   const since  = new Date(Date.now() - BASKET_WINDOW_DAYS * 24 * 3600 * 1000);

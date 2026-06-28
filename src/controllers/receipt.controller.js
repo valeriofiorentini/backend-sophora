@@ -82,7 +82,7 @@ REGOLE CRITICHE — seguile nell'ordine:
    ATTENZIONE PREZZI: Se un prezzo inizia con "4" o "4,xx" o "4.xx" verifica attentamente che non sia una lettura errata del "1" iniziale (es. "1,79" che sembra "4,79" su foto storta). Controlla sempre la coerenza col totale finale.
 
 1. SCONTI SU RIGA SEPARATA: Se dopo un prodotto c'è una riga con "SCONTO", "Sconto Reparti", "Sconto Volantino", "VOLANTINO", "VOLANTINO XX" (dove XX è il numero dello sconto in centesimi o euro), "SCONTO SOCI", "SCONTO X% CLIENTI", "SCONTO CARTA", "SCONTO WEEK END", "Sconto artic.", "Taglio Prezzo", "TAGLIO PREZZO", "Articolo prezzo fisso", "ARTICOLO PREZZO FISSO", "Sconto 10% AH", "SCONTO AH", "sconto soci" ecc., quella riga è uno SCONTO/RIDUZIONE, NON un prodotto. Mettila nel campo "discount" del prodotto precedente con valore positivo (es. 1.30, non -1.30), NON come prodotto separato.
-   REGOLA "VOLANTINO XX": se vedi "VOLANTINO" seguito da un numero (es. "VOLANTINO 17", "VOLANTINO 0,49", "VOLANTINO 1.19"), il numero dopo VOLANTINO È il valore dello sconto in euro. Leggilo esattamente: "VOLANTINO 17" = €0,17 se sembra centesimi, oppure €17 se il contesto lo giustifica — in generale trattalo come euro con virgola implicita se è un numero intero piccolo (es. 17 → 0,17 €, 49 → 0,49 €, 119 → 1,19 €). Metti questo valore come "discount" del prodotto precedente. Non inventare valori default.
+   REGOLA "VOLANTINO XX": il numero dopo VOLANTINO (es. "VOLANTINO 17") è il CODICE/NUMERO dell'offerta volantino — NON è l'importo dello sconto. L'importo dello sconto è sempre il valore nella colonna Prezzo(€) sulla stessa riga, che sarà negativo (es. -1,19). Usa quel valore come "discount" del prodotto precedente (positivo: 1.19). Ignora completamente il numero che segue VOLANTINO.
    Se non c'è un prodotto precedente chiaro, ignorala.
 
 2. PRODOTTI DUPLICATI: Unisci in UN SOLO oggetto SOLO se il prodotto ha ESATTAMENTE lo stesso nome E lo stesso prezzo unitario. Due righe con nomi simili ma prezzi diversi sono prodotti DISTINTI — non unire. Esempio: due righe "CONSILIA STRACC.165G 4% 1,89" identiche → un oggetto con quantity:2, unitPrice:1.89, totalPrice:3.78. Ma "CONSILIA STRACC.165G" e "CONSILIA GOCCE 250G" sono prodotti DIVERSI anche se entrambi "Consilia".
@@ -116,7 +116,7 @@ REGOLE CRITICHE — seguile nell'ordine:
    - PASSATA MUTT → Passata Mutti
    - PATTATE / PATATTE → "Patate" (correzione ortografica automatica — non scrivere mai "pattate")
    - ACQUA VITAL / ACQUA VITASN / VITASNELLA → "Acqua Vitasnella"
-   - SCHIACCIATINE / SCHIACCIAT / SCHIACCIATA (se non seguito da altro) → "Schiacciatine" (default — solo se lo scontrino dice esplicitamente "Schiacciata" come prodotto da forno diverso, mantieni "Schiacciata")
+   - SCHIACCIAT. / SCHIACCIATINE / SCHIACCIAT (con punto o troncato) → sempre "Schiacciatine". Solo se lo scontrino scrive per esteso "Schiacciata" (senza punto, senza troncatura) riferendosi a un prodotto da forno diverso, mantieni "Schiacciata". CONSILIA SCHIACCIAT. → "Consilia Schiacciatine".
    - LENTICCHIE VAPORE → Lenticchie al Vapore
    - SFOGLIAVELO CARNE → Sfogliatelle Velo alla Carne
    - CEREALI T.PETALI CA → Cereali Petali al Cacao

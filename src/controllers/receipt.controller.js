@@ -27,12 +27,29 @@ const openai = new OpenAI({
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 
 // ─── Modelli OCR ──────────────────────────────────────────────────────────────
-// Piano tecnico: gpt-4o-mini prima (10x meno costoso), fallback a gpt-4o su errori.
-// gpt-4o-mini: ~$0.0003/scontrino | gpt-4o: ~$0.003/scontrino
-// Su OpenRouter i modelli OpenAI richiedono il prefisso 'openai/'
-const OR_PREFIX          = process.env.OPENROUTER_API_KEY ? 'openai/' : '';
-const OCR_MODEL_FAST     = `${OR_PREFIX}gpt-4o-mini`;   // modello economico — tenta prima
-const OCR_MODEL_ACCURATE = `${OR_PREFIX}gpt-4o`;        // fallback di precisione
+// Siamo su OpenRouter → possiamo scegliere qualsiasi modello.
+// Per l'OCR scontrini serve il miglior modello VISION: Gemini 2.5 Pro è top per
+// OCR di documenti (foto storte, scontrini lunghi 60+ righe, testo italiano) ed
+// ha un output molto ampio. gpt-4o resta come secondo parere (fallback su modello
+// diverso). Tutto override-abile via env: OCR_MODEL / OCR_MODEL_FALLBACK.
+const ON_OPENROUTER      = !!process.env.OPENROUTER_API_KEY;
+const OCR_MODEL_ACCURATE = process.env.OCR_MODEL
+  || (ON_OPENROUTER ? 'google/gemini-2.5-pro' : 'gpt-4o');   // primario (massima precisione)
+const OCR_MODEL_FALLBACK = process.env.OCR_MODEL_FALLBACK
+  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');           // secondo parere su modello diverso
+const OCR_MODEL_FAST     = OCR_MODEL_ACCURATE;               // retrocompat (non più mini)
+
+// Parser JSON robusto: modelli diversi a volte avvolgono l'output in ```json … ```
+// o aggiungono testo. Ripuliamo prima di JSON.parse così il cambio modello è sicuro.
+function parseOcrJson(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  if (s.startsWith('```')) s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const first = s.indexOf('{');
+  const last  = s.lastIndexOf('}');
+  if (first !== -1 && last !== -1 && last > first) s = s.slice(first, last + 1);
+  return JSON.parse(s);
+}
 
 // V5: se il fine-tuned model è pronto, usa quello (supera entrambi)
 async function getOcrModel() {
@@ -56,7 +73,12 @@ async function callOcrApi(model, messages) {
     model,
     messages,
     response_format: { type: 'json_object' },
-    max_tokens: 4000,
+    // 16000 token: anche scontrini lunghissimi stanno dentro senza troncare il JSON.
+    // Con 4000 gli scontrini lunghi (60+ righe) venivano tagliati a metà → output corrotto.
+    max_tokens: 16000,
+    // temperature 0: estrazione deterministica, l'LLM NON inventa né traduce i nomi
+    // (es. "BANANE" restava "BANANE", non diventava "Bananes").
+    temperature: 0,
     store: false,   // GDPR: Zero Data Retention — OpenAI non trattiene i dati
     user: 'shopora-receipt-ocr', // tracking anonimo per abuse detection
   });
@@ -92,7 +114,9 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 3b. NOME NEGOZIO: Leggi l'insegna/brand ESATTAMENTE come è stampato sullo scontrino (es. "IPER TRISCOUNT", "Conad", "Esselunga") — non inventare o correggere l'ortografia. Se è presente anche una ragione sociale generica (es. "SGM Supermercati Srl", "XYZ Srl", "ABC SpA"), combinale: "IPER TRISCOUNT - SGM Supermercati Srl". Se lo scontrino ha SOLO la ragione sociale senza un'insegna riconoscibile, usa solo quella. Priorità: insegna brand > ragione sociale.
 
-4. NOMI PRODOTTI: Mantieni il nome il più completo e fedele possibile allo scontrino. Espandi le abbreviazioni ma non perdere informazioni importanti:
+4. NOMI PRODOTTI: Il "name" deve restare FEDELE allo scontrino — è una trascrizione, non una traduzione.
+   REGOLA D'ORO: NON tradurre mai in altre lingue, NON inventare forme plurali/singolari diverse, NON cambiare parole già chiare in italiano. Esempi di errori da NON fare: "BANANE" → "Bananes" (SBAGLIATO, deve restare "Banane"), "BANANE" → "Banana" (SBAGLIATO), "PESCHE NETTARINE" → "Pesche" (SBAGLIATO, mantieni "Pesche Nettarine"). Se una parola è già una parola italiana corretta, lasciala IDENTICA (solo la prima lettera maiuscola).
+   Espandi le abbreviazioni SOLO quando sono chiaramente troncature (es. "PROSC." → "Prosciutto"), ma non perdere informazioni:
    - C.N.FIL → Conserva/Filetti (es. C.N.FIL.MELANZANE → "Filetti di Melanzane sottoolio")
    - C.S/S → Condimento/Salsa (C.S/S INS.RUSSA → "Insalata Russa")
    - INS. → Insalata, C.IGIENICA → Carta Igienica, C.STRACCHINO / C.STRACCHINOI → Stracchino
@@ -197,8 +221,8 @@ async function scanReceipt(req, res) {
   }
 
   // 3. OCR con gpt-4o-mini → fallback gpt-4o
-  //    Strategia: tenta prima col modello economico (10x meno costoso).
-  //    Se la risposta non è JSON valido, ritenta con gpt-4o (più accurato).
+  //    Strategia: usa il modello accurato (Gemini 2.5 Pro su OpenRouter).
+  //    Se la somma non torna o il JSON è malformato, secondo parere con gpt-4o.
   //    Se è disponibile un fine-tuned model, usa direttamente quello.
   let parsed;
   try {
@@ -211,20 +235,23 @@ async function scanReceipt(req, res) {
       ],
     }];
 
-    // Tentativo 1: fine-tuned (se disponibile) oppure gpt-4o-mini
-    const firstModel = fineTunedModel ?? OCR_MODEL_FAST;
+    // Tentativo 1: fine-tuned (se disponibile) oppure gpt-4o (accurato).
+    // Prima si usava gpt-4o-mini per risparmiare, ma su scontrini reali (foto
+    // storte, 60+ righe) sbagliava troppo: nomi alterati e prezzi errati.
+    // L'accuratezza dell'estrazione È il valore dell'app → vale i ~$0.003/scontrino.
+    const firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
     const response   = await callOcrApi(firstModel, messages);
     const rawContent = response.choices[0].message.content;
 
     let parsedFirst;
     try {
-      parsedFirst = JSON.parse(rawContent);
+      parsedFirst = parseOcrJson(rawContent);
       console.info(`[receipt] OCR ok con modello ${firstModel}`);
     } catch {
       parsedFirst = null;
     }
 
-    // Validazione somma item vs totalAmount: se discrepanza >5% o JSON malformato → fallback gpt-4o
+    // Validazione somma item vs totalAmount: se discrepanza >5% o JSON malformato → fallback modello diverso
     const needsFallback = !parsedFirst || (() => {
       const items = Array.isArray(parsedFirst.items) ? parsedFirst.items : [];
       const sumItems = items.reduce((acc, i) => acc + (parseFloat(i.totalPrice) || 0), 0);
@@ -232,15 +259,15 @@ async function scanReceipt(req, res) {
       if (total <= 0 || items.length === 0) return false;
       const diff = Math.abs(sumItems - total) / total;
       if (diff > 0.05) {
-        console.warn(`[receipt] somma item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}% → fallback gpt-4o`);
+        console.warn(`[receipt] somma item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}% → fallback ${OCR_MODEL_FALLBACK}`);
         return true;
       }
       return false;
     })();
 
     if (needsFallback) {
-      console.warn(`[receipt] fallback a ${OCR_MODEL_ACCURATE}`);
-      const fallbackRes = await callOcrApi(OCR_MODEL_ACCURATE, [
+      console.warn(`[receipt] fallback a ${OCR_MODEL_FALLBACK}`);
+      const fallbackRes = await callOcrApi(OCR_MODEL_FALLBACK, [
         ...messages,
         ...(parsedFirst ? [
           { role: 'assistant', content: rawContent },
@@ -250,8 +277,8 @@ async function scanReceipt(req, res) {
           { role: 'user', content: 'Il JSON precedente è malformato. Restituisci SOLO il JSON corretto senza markdown, backtick o testo extra.' },
         ]),
       ]);
-      parsed = JSON.parse(fallbackRes.choices[0].message.content);
-      console.info(`[receipt] OCR ok con fallback ${OCR_MODEL_ACCURATE}`);
+      parsed = parseOcrJson(fallbackRes.choices[0].message.content);
+      console.info(`[receipt] OCR ok con fallback ${OCR_MODEL_FALLBACK}`);
     } else {
       parsed = parsedFirst;
     }
@@ -543,18 +570,44 @@ function isNonPantryItem(name) {
 }
 
 // ─── Categoria automatica per la dispensa (niente più "altro" a tappeto) ───────
+// Usa STEM (radici) e non parole intere: "banan" copre banana/banane, "albicocc"
+// copre albicocca/albicocche, ecc. Così plurali e nomi alterati dall'OCR matchano.
+// L'ORDINE conta: le categorie con possibili collisioni (bevande, latticini, carne)
+// sono prima di frutta_verdura per evitare es. "aranciata"→frutta o "uova"→altro.
 function inferCategory(name) {
   const n = name.toLowerCase();
   const map = [
-    ['frutta_verdura', ['mela','mele','banana','pomodor','insalata','patata','patate','cipoll','carota','zucchin','melanzan','pesca','pesche','frutta','verdura','limone','arancia','uva','fragol','spinaci','funghi','champignon','lattuga','finocchi','peperon','broccoli','sedano','zucca']],
-    ['carne_pesce', ['pollo','manzo','bovino','maiale','salsiccia','hamburg','wurstel','prosciutto','salame','speck','mortadella','bresaola','tonno','salmone','merluzzo','pesce','gamber','filetto','arista','tacchino','fettine','macinato','wurstel']],
-    ['latticini', ['latte','formaggio','stracchino','mozzarella','yogurt','burro','panna','ricotta','grana','parmigiano','philadelphia','muller','müller','gorgonzola','mascarpone','uova','uovo']],
-    ['pane_pasta', ['pane','pasta','spaghetti','penne','fusilli','riso','farina','pizza','piadina','pancarre','pancarré','panini','baguette','schiacciat','crackers','fette biscottate','grissini','cereali']],
-    ['bevande', ['acqua','vitasnella','succo','aranciata','coca','cola','birra','vino','tè','the','caffe','caffè','bibita','energy','gassosa','spremuta']],
-    ['dolci_snack', ['biscotti','cioccolat','merendine','snack','caramelle','gelato','torta','crema','nutella','pan di stelle','pandistelle','wafer','barrette','patatine']],
-    ['surgelati', ['surgelat','gelo','freezer','bastoncini','minestrone surgelato']],
-    ['dispensa', ['olio','aceto','sale','zucchero','passata','pelati','legumi','fagioli','lenticchie','ceci','conserve','sugo','pomodoro pelati','spezie','dado','tonno']],
-    ['igiene_casa', ['carta igienica','detersivo','sapone','shampoo','dentifricio','carta cucina','foxy','scottex','ammorbidente','candeggina','spugn']],
+    ['bevande', ['acqua','vitasn','frizzant','succo','aranciat','limonat','coca-cola','coca cola',' cola',
+      'pepsi','birra','vino','spumante','prosecco','tè ',' the ','thè','nescafe','caffe',
+      'caffè','ginseng','bibita','energy','gatorade','redbull','gassosa','spremuta',
+      'estathe','san benedetto','s.benedetto']],
+    ['latticini', ['latte','parmalat','formagg','stracchin','mozzarell','bocconcin','yogurt',
+      'yoga ','kefir','muller','müller','burro','panna','ricotta','grana','parmigian',
+      'philadelphia','gorgonzola','mascarpone','provol','edamer','emment','fontina',
+      'scamorz','uova','uovo']],
+    ['carne_pesce', ['pollo','manzo','bovino','maiale','salsicc','hamburg','burger','wurstel',
+      'prosciutt','salame','speck','bacon','citterio','mortadella','bresaola','saltimbocca',
+      'tonno','salmone','merluzzo','pesce','gamber','filetto','arista','tacchino','fettine',
+      'macinato','cotoletta','nugget']],
+    ['frutta_verdura', ['mela','mele','banan','pomodor','datter','insalat','patata','patate',
+      'cipoll','carota','carote','zucchin','zucca','melanzan','pesca','pesche','nettarin',
+      'albicocc','ciliegi','susin','prugn','fragol','mirtill','lampon','uva','kiwi','ananas',
+      'melon','angur','arance','arancia tar','limone','limoni','mandarin','clementin',
+      'frutta','verdura','spinaci','funghi','champignon','lattuga','finocchi','peperon',
+      'broccoli','sedano','rucol','cetriol','rape','bietol','radicchio','cavol','noci',
+      'nocciole','mandorle']],
+    ['pane_pasta', ['pane','pasta','spaghet','penne','fusill','rigaton','riso','farina','pizza',
+      'piadina','pancarre','pancarré','panini','baguette','schiacciat','cracker','grissini',
+      'cereali','fette biscottat','lariano','crostat']],
+    ['dolci_snack', ['biscott','cioccolat','kinder','merendin','snack','caramell','gelato',
+      'torta','nutella','pan di stelle','pandistelle','wafer','barrett','patatine','brioche',
+      'cornett','ghiacciol']],
+    ['surgelati', ['surgelat','freezer','bastoncini','minestrone surgelato','findus','frosta']],
+    ['dispensa', ['olio','aceto','sale','zucchero','passata','pelati','legumi','fagioli',
+      'lenticchie','ceci','conserve','sugo','maizena','spezie','dado','cannamela','origano',
+      'miele','marmellat','confettura','crema spalmabile']],
+    ['igiene_casa', ['carta igienica','c.igienica','detersivo','sapone','shampoo','dentifricio',
+      'carta cucina','foxy','scottex','ammorbidente','candeggina','spugn','sgrassatore','det.']],
   ];
   for (const [cat, words] of map) {
     if (words.some(w => n.includes(w))) return cat;

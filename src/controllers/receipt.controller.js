@@ -202,6 +202,39 @@ async function ocrSpaceText(imageBase64) {
   return (r.data?.ParsedResults || []).map(p => p.ParsedText || '').join('\n').trim();
 }
 
+// OCR self-hosted: POST l'immagine a un servizio OCR sulla tua VPS (Docker).
+// Funziona con server tipo "hertzg/tesseract-server" (multipart file+options) o
+// con un endpoint generico che ritorna { text } / { result } / { data.stdout }.
+// Config: OCR_PROVIDER=selfhosted  e  OCR_URL=http://127.0.0.1:8884/tesseract
+async function ocrSelfHostedText(imageBase64) {
+  const url = process.env.OCR_URL;
+  if (!url) throw new Error('OCR_URL non configurato');
+  const FormData = require('form-data');
+  const b64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+  const buf = Buffer.from(b64, 'base64');
+  const form = new FormData();
+  form.append('file', buf, { filename: 'receipt.jpg', contentType: 'image/jpeg' });
+  // 'options' è il formato di tesseract-server; gli OCR generici lo ignorano.
+  form.append('options', JSON.stringify({ languages: ['ita'] }));
+  const r = await axios.post(url, form, {
+    headers: form.getHeaders(),
+    timeout: 60000, maxContentLength: Infinity, maxBodyLength: Infinity,
+  });
+  const d = r.data || {};
+  const text = d?.data?.stdout || d?.text || d?.result
+    || d?.ParsedResults?.[0]?.ParsedText || (typeof d === 'string' ? d : '');
+  return String(text).trim();
+}
+
+// Sceglie la fonte OCR in base a OCR_PROVIDER (default: ocrspace).
+async function extractReceiptText(imageBase64) {
+  const provider = (process.env.OCR_PROVIDER || 'ocrspace').toLowerCase();
+  if (['selfhosted', 'tesseract', 'paddle', 'http'].includes(provider)) {
+    return ocrSelfHostedText(imageBase64);
+  }
+  return ocrSpaceText(imageBase64);
+}
+
 // Prompt che STRUTTURA il testo OCR (già accurato) — non legge immagini.
 const STRUCTURE_PROMPT = `Ti do il TESTO GREZZO di uno scontrino italiano, già letto da un OCR affidabile. Il tuo compito è SOLO STRUTTURARLO in JSON. Restituisci SOLO JSON valido.
 
@@ -224,9 +257,9 @@ Struttura JSON: {"storeName":"…","storeChain":"… o null","storeAddress":"…
 async function tryOcrSpacePipeline(imageBase64) {
   let text;
   try {
-    text = await ocrSpaceText(imageBase64);
+    text = await extractReceiptText(imageBase64);
   } catch (e) {
-    console.warn('[receipt] OCR.space non disponibile:', e.message);
+    console.warn('[receipt] OCR (testo) non disponibile:', e.message);
     return null;
   }
   if (!text || text.replace(/\s/g, '').length < 40) {

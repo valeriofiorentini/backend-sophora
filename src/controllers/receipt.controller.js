@@ -36,10 +36,13 @@ const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/he
 // Il problema originale era gpt-4o-MINI (debole), non gpt-4o. gpt-4o risolve
 // accuratezza ed è affidabile. Override via env: OCR_MODEL / OCR_MODEL_FALLBACK.
 const ON_OPENROUTER      = !!process.env.OPENROUTER_API_KEY;
+// Primario: Claude Sonnet 4 — il più FEDELE nell'OCR (gpt-4o tendeva a "indovinare"
+// i marchi: FROSTA→Findus/Ringo, LARIANO→Laranjina). Claude trascrive quello che vede.
+// Fallback: gpt-4o (modello diverso, secondo parere). Override via env OCR_MODEL.
 const OCR_MODEL_ACCURATE = process.env.OCR_MODEL
-  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');           // primario (provato e affidabile)
+  || (ON_OPENROUTER ? 'anthropic/claude-sonnet-4' : 'gpt-4o');   // primario (massima fedeltà)
 const OCR_MODEL_FALLBACK = process.env.OCR_MODEL_FALLBACK
-  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');           // secondo passaggio con hint correzione
+  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');               // secondo parere su modello diverso
 const OCR_MODEL_FAST     = OCR_MODEL_ACCURATE;               // retrocompat (non più mini)
 
 // Parser JSON robusto: modelli diversi a volte avvolgono l'output in ```json … ```
@@ -122,41 +125,11 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 3b. NOME NEGOZIO: Leggi l'insegna/brand ESATTAMENTE come è stampato sullo scontrino (es. "IPER TRISCOUNT", "Conad", "Esselunga") — non inventare o correggere l'ortografia. Se è presente anche una ragione sociale generica (es. "SGM Supermercati Srl", "XYZ Srl", "ABC SpA"), combinale: "IPER TRISCOUNT - SGM Supermercati Srl". Se lo scontrino ha SOLO la ragione sociale senza un'insegna riconoscibile, usa solo quella. Priorità: insegna brand > ragione sociale.
 
-4. NOMI PRODOTTI: Il "name" deve restare FEDELE allo scontrino — è una trascrizione, non una traduzione.
-   REGOLA D'ORO: NON tradurre mai in altre lingue, NON inventare forme plurali/singolari diverse, NON cambiare parole già chiare in italiano. Esempi di errori da NON fare: "BANANE" → "Bananes" (SBAGLIATO, deve restare "Banane"), "BANANE" → "Banana" (SBAGLIATO), "PESCHE NETTARINE" → "Pesche" (SBAGLIATO, mantieni "Pesche Nettarine"). Se una parola è già una parola italiana corretta, lasciala IDENTICA (solo la prima lettera maiuscola).
-   Espandi le abbreviazioni SOLO quando sono chiaramente troncature (es. "PROSC." → "Prosciutto"), ma non perdere informazioni:
-   - C.N.FIL → Conserva/Filetti (es. C.N.FIL.MELANZANE → "Filetti di Melanzane sottoolio")
-   - C.S/S → Condimento/Salsa (C.S/S INS.RUSSA → "Insalata Russa")
-   - INS. → Insalata, C.IGIENICA → Carta Igienica, C.STRACCHINO / C.STRACCHINOI → Stracchino
-   - CALVE' / CALVÉ → Calvé, BRAVO → Bravo
-   - Misure: 165G → 165g, 200G → 200g, X6 → conf. da 6, X18 → conf. da 18, X10 → conf. da 10
-   - Consilia: brand di prodotti a marchio IPER/SGM. CONSILIA STRACC. → "Consilia Stracchino", CONSILIA GOCCE → "Consilia Gocce (cioccolato)", CONSILIA SACCHI GELO → "Consilia Sacchi Gelo", CONSILIA STRAC. → "Consilia Stracchino"
-   - PESCHE NETT. → "Pesche Nette", CREMA P.STELLE / CREMA PAN STELLE / CREMA STELLE → "Crema Pan di Stelle" (è il biscotto Nestlé Pan di Stelle, NON pasticcera generica), FOXY CARTA CUCINA → "Foxy Carta Cucina"
-   - Regola "STELLE": se vedi "STELLE" o "P.STELLE" vicino a "CREMA", è sempre "Pan di Stelle" (Nestlé). Se vedi "PASTICCERA" senza "STELLE", allora è crema pasticcera generica.
-   - PAM: MB → Marca Bene, T.ARCA → Terra d'Aromi, FROL. → Frollini, CAC → Cacao, BASTONCINI → Bastoncini, SFOGLIAVELO → Sfogliatelle Velo, BIO-POM.DATTER → Bio Pomodori Datterini, SOTTILISSIME → Sottilissime, GROS → Grossa, CHAMP. → Champignon, AFFET → Affettati, PANCARRE → Pancarré, PIADA → Piadina, PR.CRUDO → Prosciutto Crudo, STAG → Stagionato, PANINI → Panini, HAMBURG → Hamburger, BOVI → Bovino, BIANCA SFOGLIA → Pasta Sfoglia Bianca, YOG → Yogurt, MAGRO BIAN → Magro Bianco, UOVA MEDIE → Uova Medie, BAGUETTE RU → Baguette Rustica, G.PADANO GRATT → Grana Padano Grattugiato, FILETTO DI MER → Filetto di Merluzzo, PETTO FETTE FA → Petto di Pollo Fette Farcite, SALE GROSSO IO → Sale Grosso Iodato, INSALATA VIVAC → Insalata Vivace, PANBAUL BIANCO → Panbaul Bianco
-   - PAM FREEZER → prodotto surgelato PAM (es. "PAM FREEZER MEDI" → "Surgelati PAM Medi")
-   - BIO SACC. OF 60% → Sacchetto Biodegradabile Oxo-Flap 60% (shopper biodegradabile — ESCLUDI dagli items come shopper/borsa)
-   - Esselunga: NS → Nostra Spesa
-   - GX2 → confezione doppia
-   - PETALI SPECK → Petali di Speck, NEGRO → (marca)
-   - ROBERTO G. PIADA / ROBERT G.PIAD → Roberto Giordano Piadina
-   - ROBER HAMB → Robert Hamburger, MEG MAX → Mega Max
-   - KELL. → Kellogg's, COCOOPS BARC → CocoPops Barchette
-   - MULLER / MULLER → Müller (marca yogurt), 8 BIANCO MULLER → Yogurt 8 Bianco Müller
-   - FATT.ULIV OLIO EVO → Olio Extra Vergine di Oliva Frantoi Ulivi
-   - MANT OLIO EX.V. EQ → Olio Extra Vergine Equosolidale
-   - PASSATA MUTT → Passata Mutti
-   - PATTATE / PATATTE → "Patate" (correzione ortografica automatica — non scrivere mai "pattate")
-   - ACQUA VITAL / ACQUA VITASN / VITASNELLA → "Acqua Vitasnella"
-   - SCHIACCIAT. / SCHIACCIATINE / SCHIACCIAT (con punto o troncato) → sempre "Schiacciatine". Solo se lo scontrino scrive per esteso "Schiacciata" (senza punto, senza troncatura) riferendosi a un prodotto da forno diverso, mantieni "Schiacciata". CONSILIA SCHIACCIAT. → "Consilia Schiacciatine".
-   - LENTICCHIE VAPORE → Lenticchie al Vapore
-   - SFOGLIAVELO CARNE → Sfogliatelle Velo alla Carne
-   - CEREALI T.PETALI CA → Cereali Petali al Cacao
-   - BARILLA PENN.RIGAT → Barilla Penne Rigate, BARILLA FUSILLI 98 → Barilla Fusilli n.98, BARILLA SPAGH.N.5 → Barilla Spaghetti n.5
-   - RUMMO FUSILLI / RUMMO PENNE RIGATE / RUMMO MEZ.PENNE.RI / RUMMO SPAGHETTI / RUMMO SPAGHETTONI → pasta Rummo (mantieni il formato del nome)
-   - P FILETTO FAM AIA → Filetto di Pollo Famiglia AIA
-   - CANNAMELA → Cannamela (spezie, mantieni il nome)
-   - Prefisso "T " sugli scontrini PAM = indicatore IVA, ignoralo nel nome prodotto
+4. NOMI PRODOTTI — TRASCRIZIONE FEDELE: il "name" è quello che LEGGI stampato, lettera per lettera. NON è una traduzione né un'interpretazione.
+   - NON sostituire un marchio con uno più noto (FROSTA resta Frosta, mai Findus/Ringo; YOGA resta Yoga, mai Yoca; CONSILIA resta Consilia; LARIANO resta Lariano).
+   - NON tradurre, NON cambiare plurali/singolari, NON "correggere" parole già chiare (BANANE resta "Banane", non "Bananes"/"Banana").
+   - Espandi un'abbreviazione SOLO se è una troncatura ovvia e sicura (es. "PROSC." → "Prosciutto", "C.IGIENICA" → "Carta Igienica"). In tutti gli altri casi, se non sei sicuro, scrivi il testo COSÌ COM'È sullo scontrino: meglio un nome troncato ma vero che un nome inventato.
+   - Metti in "rawName" il testo grezzo esatto della riga, sempre.
 
 4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome.
    ATTENZIONE — possono esserci PIÙ sezioni "GASTRONOMIA - X,XX -" CONSECUTIVE, ognuna con il proprio header di prezzo e il proprio prodotto. Sono articoli DISTINTI: includili TUTTI, uno per ogni header. Esempio reale:
@@ -184,8 +157,8 @@ Struttura JSON da restituire:
   "receiptDate": "YYYY-MM-DD o null",
   "items": [
     {
-      "name": "nome prodotto leggibile in italiano (espandi abbreviazioni)",
-      "rawName": "testo esatto sullo scontrino",
+      "name": "ESATTAMENTE come stampato (solo troncature ovvie espanse, mai marchi sostituiti)",
+      "rawName": "testo grezzo esatto della riga",
       "barcode": "codice EAN se presente o null",
       "quantity": 1,
       "unitPrice": 0.00,

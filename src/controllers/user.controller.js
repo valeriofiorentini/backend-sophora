@@ -389,7 +389,11 @@ async function editProfile(req, res) {
 
   let avatar;
   if (req.file) {
+    // File multipart caricato direttamente
     avatar = await uploadToS3(req.file, 'avatars');
+  } else if (req.body.avatar && typeof req.body.avatar === 'string' && req.body.avatar.startsWith('http')) {
+    // URL S3 già caricato dal client (il frontend carica prima su S3, poi manda l'URL)
+    avatar = req.body.avatar;
   }
 
   const data = {

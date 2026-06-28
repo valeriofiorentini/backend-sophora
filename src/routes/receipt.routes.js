@@ -9,8 +9,9 @@ router.use(auth);
 
 router.post('/scan',   receiptRateLimit, upload.single('image'), asyncHandler(c.scanReceipt));
 router.get('/',        asyncHandler(c.getReceipts));
-router.get('/stats',   asyncHandler(c.getReceiptStats));
-router.get('/:id',     asyncHandler(c.getReceiptById));
+router.get('/stats',          asyncHandler(c.getReceiptStats));
+router.post('/export/excel',  asyncHandler(c.exportReceiptsExcel));
+router.get('/:id',            asyncHandler(c.getReceiptById));
 router.delete('/:id',  asyncHandler(c.deleteReceipt));
 
 module.exports = router;

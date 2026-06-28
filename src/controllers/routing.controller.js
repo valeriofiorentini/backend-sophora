@@ -7,6 +7,7 @@
 const { success, error } = require('../utils/response');
 const { optimizeRoute } = require('../services/ml.service');
 const prisma = require('../config/database');
+const { isPremium } = require('../utils/planLimits');
 
 /**
  * POST /api/routing/optimize
@@ -22,6 +23,10 @@ const prisma = require('../config/database');
  */
 async function optimizeShoppingRoute(req, res) {
   const { userLat, userLon, storeIds, cartItems = [], returnHome = true } = req.body;
+
+  if (!await isPremium(req.userId)) {
+    return error(res, 'Il percorso ottimizzato è una funzione Premium. Abbonati a Shopora Premium.', 403);
+  }
 
   if (!userLat || !userLon) return error(res, 'userLat e userLon obbligatori');
   if (!storeIds?.length) return error(res, 'Seleziona almeno un negozio');

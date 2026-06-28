@@ -20,6 +20,7 @@
 
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
+const { isPremium } = require('../utils/planLimits');
 
 const BASKET_WINDOW_DAYS  = 90;   // finestra per la "spesa tipo" dell'utente
 const PRICES_WINDOW_DAYS  = 365;  // finestra per le mediane di PriceHistory
@@ -463,6 +464,10 @@ async function getHealthAdvice(req, res) {
  * con pochi dati.
  */
 async function getAssociations(req, res) {
+  if (!await isPremium(req.userId)) {
+    return error(res, 'I suggerimenti "cosa stai dimenticando" sono una funzione Premium. Abbonati a Shopora Premium.', 403);
+  }
+
   const userId = req.userId;
   const since  = new Date(Date.now() - BASKET_WINDOW_DAYS * 24 * 3600 * 1000);
 

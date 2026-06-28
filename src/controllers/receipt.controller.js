@@ -16,6 +16,7 @@ const prisma  = require('../config/database');
 const { uploadToS3 }  = require('../config/s3');
 const { success, error } = require('../utils/response');
 const { awardPoints }    = require('./gamification.controller');
+const { checkReceiptLimit } = require('../utils/planLimits');
 
 const openai = new OpenAI({
   apiKey:  process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
@@ -158,6 +159,16 @@ Struttura JSON da restituire:
 async function scanReceipt(req, res) {
   if (!req.file) return error(res, 'Immagine scontrino obbligatoria');
 
+  // Controllo limite piano gratuito (10 scontrini/mese)
+  const limitCheck = await checkReceiptLimit(req.userId);
+  if (!limitCheck.allowed) {
+    return error(res,
+      `Hai raggiunto il limite di ${limitCheck.limit} scontrini al mese del piano gratuito. ` +
+      `Passa a Shopora Premium per scansioni illimitate.`,
+      403,
+    );
+  }
+
   // Validazione MIME type
   if (!ALLOWED_MIME.has(req.file.mimetype)) {
     return error(res, `Formato immagine non supportato: ${req.file.mimetype}. Usa JPEG, PNG o WEBP.`);
@@ -246,8 +257,37 @@ async function scanReceipt(req, res) {
     return error(res, 'Errore durante la lettura dello scontrino', 500);
   }
 
-  // 4. Salva tutto in transaction atomica — niente dati parziali in caso di crash
+  // 4. Controllo duplicato: stessa data + stesso negozio + stesso totale + stesso n° prodotti
+  //    Se esiste già uno scontrino identico, aggiorna i dati ma NON aggiungere punti.
   const items = Array.isArray(parsed.items) ? parsed.items : [];
+  let isDuplicate = false;
+
+  if (parsed.receiptDate && (parsed.storeChain || parsed.storeName) && parsed.totalAmount) {
+    const dateFrom = new Date(parsed.receiptDate);
+    const dateTo   = new Date(parsed.receiptDate);
+    dateTo.setDate(dateTo.getDate() + 1);
+
+    const existing = await prisma.receipt.findFirst({
+      where: {
+        userId: req.userId,
+        id:     { not: receipt.id },   // non sé stesso
+        receiptDate: { gte: dateFrom, lt: dateTo },
+        totalAmount: parseFloat(parsed.totalAmount),
+        ...(parsed.storeChain ? { storeChain: parsed.storeChain } : { storeName: parsed.storeName }),
+        status: 'processed',
+      },
+      include: { _count: { select: { items: true } } },
+    });
+
+    if (existing && existing._count.items === items.length) {
+      isDuplicate = true;
+      console.info(`[receipt] duplicato rilevato (id=${existing.id}) — aggiorno dati, nessun punto aggiunto`);
+      // Elimina il record "processing" appena creato, useremo quello esistente
+      await prisma.receipt.delete({ where: { id: receipt.id } }).catch(() => {});
+      receipt = existing; // punta al record esistente per il resto del flusso
+    }
+  }
+
   let updated;
 
   try {
@@ -341,11 +381,18 @@ async function scanReceipt(req, res) {
       .catch(e => console.warn('[receipt] pantry sync error:', e.message));
   }
 
-  // 7. Assegna punti gamification (fire-and-forget — non blocca la risposta)
-  awardPoints(req.userId, RECEIPT_SCAN_POINTS, 'receipt_scan', receipt.id)
-    .catch(e => console.warn('[receipt] awardPoints error:', e.message));
+  // 7. Assegna punti gamification — solo se NON è un duplicato
+  if (!isDuplicate) {
+    awardPoints(req.userId, RECEIPT_SCAN_POINTS, 'receipt_scan', receipt.id)
+      .catch(e => console.warn('[receipt] awardPoints error:', e.message));
+  }
 
-  return success(res, { receipt: updated, itemCount: items.length }, 201);
+  return success(res, {
+    receipt:     updated,
+    itemCount:   items.length,
+    isDuplicate,
+    ...(isDuplicate ? { message: 'Scontrino già presente: dati aggiornati, nessun punto aggiunto.' } : {}),
+  }, 201);
 }
 
 const RECEIPT_SCAN_POINTS = 50;
@@ -556,4 +603,76 @@ function normalizeProductKey(name) {
     .slice(0, 80);
 }
 
-module.exports = { scanReceipt, getReceipts, getReceiptById, deleteReceipt, getReceiptStats };
+// ─── POST /api/receipts/export/excel (solo Premium) ──────────────────────────
+// Genera il CSV e lo invia via email all'utente (non download diretto)
+async function exportReceiptsExcel(req, res) {
+  const { isPremium: checkPremium } = require('../utils/planLimits');
+  if (!await checkPremium(req.userId)) {
+    return error(res, 'L\'export Excel è una funzione Premium. Abbonati a Shopora Premium.', 403);
+  }
+
+  const user = await prisma.user.findUnique({
+    where:  { id: req.userId },
+    select: { email: true, name: true, username: true },
+  });
+  if (!user?.email) return error(res, 'Email utente non trovata', 400);
+
+  const receipts = await prisma.receipt.findMany({
+    where:   { userId: req.userId, status: 'processed' },
+    orderBy: { receiptDate: 'desc' },
+    include: { items: true },
+  });
+
+  // Genera CSV (separatore ; standard europeo, BOM UTF-8 per Excel)
+  const rows = [
+    ['Data', 'Negozio', 'Prodotto', 'Qtà', 'Prezzo unitario €', 'Totale €', 'Sconto €'].join(';'),
+  ];
+  for (const r of receipts) {
+    const date  = r.receiptDate ? r.receiptDate.toISOString().slice(0, 10) : '';
+    const store = (r.storeName || r.storeChain || '').replace(/;/g, ',');
+    if (r.items.length === 0) {
+      rows.push([date, store, '', '', '', (r.totalAmount ?? ''), ''].join(';'));
+    }
+    for (const item of r.items) {
+      rows.push([
+        date,
+        store,
+        (item.name || '').replace(/;/g, ','),
+        item.quantity ?? 1,
+        (item.unitPrice  ?? '').toString().replace('.', ','),
+        (item.totalPrice ?? '').toString().replace('.', ','),
+        (item.discount   ?? '').toString().replace('.', ','),
+      ].join(';'));
+    }
+  }
+  const csv = '﻿' + rows.join('\r\n');
+
+  // Manda via email
+  try {
+    const { sendMailWithAttachment } = require('../services/mailer');
+    const userName = user.name || user.username || 'Utente';
+    await sendMailWithAttachment(
+      user.email,
+      'Shopora — La tua storia della spesa',
+      `<p>Ciao ${userName},</p>
+       <p>In allegato trovi la storia completa della tua spesa in formato CSV, apribile con Microsoft Excel o Google Sheets.</p>
+       <p>Per aprirlo correttamente in Excel: File → Importa → scegli CSV → separatore punto e virgola (;).</p>
+       <br><p>Buona spesa! 🛒<br><b>Il team Shopora</b></p>`,
+      {
+        filename:    'shopora_spesa.csv',
+        content:     csv,
+        contentType: 'text/csv; charset=utf-8',
+        encoding:    'utf8',
+      },
+    );
+    return success(res, { message: `Export inviato a ${user.email}. Controlla la posta (può richiedere qualche minuto).` });
+  } catch (mailErr) {
+    console.error('[export] email error:', mailErr.message);
+    // Fallback: ritorna il CSV direttamente se email non funziona
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="shopora_spesa.csv"');
+    return res.send(csv);
+  }
+}
+
+module.exports = { scanReceipt, getReceipts, getReceiptById, deleteReceipt, getReceiptStats, exportReceiptsExcel };

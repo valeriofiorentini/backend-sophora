@@ -1,6 +1,7 @@
 const OpenAI = require('openai');
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
+const { checkChatLimit } = require('../utils/planLimits');
 
 const openai = new OpenAI({
   apiKey:  process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY,
@@ -88,6 +89,16 @@ async function sendMessage(req, res) {
   if (!message) return error(res, 'Messaggio vuoto');
   if (message.length > MESSAGE_MAX_LEN) {
     return error(res, `Messaggio troppo lungo (massimo ${MESSAGE_MAX_LEN} caratteri)`);
+  }
+
+  // Controllo limite piano gratuito (15 messaggi/giorno)
+  const chatLimit = await checkChatLimit(req.userId);
+  if (!chatLimit.allowed) {
+    return error(res,
+      `Hai raggiunto il limite di ${chatLimit.limit} messaggi al giorno del piano gratuito. ` +
+      `Passa a Shopora Premium per domande illimitate.`,
+      403,
+    );
   }
 
   // Verify session belongs to user

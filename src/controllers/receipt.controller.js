@@ -139,7 +139,12 @@ REGOLE CRITICHE — seguile nell'ordine:
    NON saltare quella in mezzo: ogni header "GASTRONOMIA - X,XX -" corrisponde a un prodotto da includere.
    Esempi nomi gastronomia: POLLO ARR → "Gastronomia: Pollo Arrosto", PATATE ARR / PATTATE ARR / PAT.ARROSTO → "Gastronomia: Patate Arrosto" (NON "Pattate"), LASAGNE → "Gastronomia: Lasagne", ARISTA → "Gastronomia: Arista", CIPOLLINE BORETTANE → "Gastronomia: Cipolline Borettane".
 
-5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio.
+4c. ALTRI REPARTI (regola CRITICA): la stessa logica vale per QUALSIASI header di reparto con prezzo separato, es. "PANE - 2,09 -", "ORTOFRUTTA - X,XX -", "MACELLERIA - X,XX -", "SALUMERIA - X,XX -". L'header è il REPARTO, NON un prodotto: il prodotto VERO è la riga SOTTO l'header.
+   Esempio: "PANE - 2,09 -" seguito da "LARIANO ... 2,09" → l'item è "Lariano" 2.09 (NON "Pane"!). Non mettere MAI il nome del reparto da solo ("Pane", "Ortofrutta", "Gastronomia") come prodotto.
+
+5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio, "OFFERTA"/"OMAGGIO" senza un prezzo prodotto.
+   ⛔ ESCLUDI il NOME DELL'OPERATORE/CASSIERE: in alto, tra l'intestazione del negozio e il primo prodotto, c'è spesso un nome di persona con iniziale puntata (es. "DANIELE F.", "MARIO R.") o "OPERATORE"/"CASSA N."/"CASSIERE". NON è un prodotto: NON includerlo MAI (non ha un prezzo prodotto associato).
+   ⛔ ESCLUDI i nomi di REPARTO da soli ("PANE", "GASTRONOMIA", "ORTOFRUTTA", "MACELLERIA") — sono header, non prodotti (vedi regola 4c).
    INCLUDI sempre shopper e sacchetti anche se costano poco (es. "SHOPPER MAT-BIO €0,12") — l'utente vuole vedere tutto quello che ha pagato.
    NON escludere MAI prodotti alimentari o prodotti per la casa — includi assolutamente TUTTI i prodotti con un prezzo.
 

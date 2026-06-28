@@ -37,18 +37,45 @@ router.patch('/changePasswordByOldPassword', changePasswordLimit, asyncHandler(c
 router.delete('/delete-account',                               asyncHandler(c.deleteAccount));
 router.post('/logout',                                         asyncHandler(c.logout));
 
-// FCM token
+// FCM token (+ posizione opzionale per le offerte vicine)
 router.post('/fcm-token', asyncHandler(async (req, res) => {
-  const { fcmToken } = req.body;
+  const { fcmToken, latitude, longitude } = req.body;
   if (!fcmToken || typeof fcmToken !== 'string') {
     return res.status(400).json({ success: false, message: 'fcmToken non valido' });
   }
   const prisma = require('../config/database');
+  const data = { fcmToken: fcmToken.slice(0, 500) };
+  const lat = parseFloat(latitude);
+  const lon = parseFloat(longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    data.latitude  = lat;
+    data.longitude = lon;
+  }
+  await prisma.user.update({ where: { id: req.userId }, data });
+  return res.json({ success: true });
+}));
+
+// Aggiorna solo la posizione dell'utente (chiamata dalla dashboard quando ottiene il GPS)
+router.post('/location', asyncHandler(async (req, res) => {
+  const { latitude, longitude } = req.body;
+  const lat = parseFloat(latitude);
+  const lon = parseFloat(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ success: false, message: 'Coordinate non valide' });
+  }
+  const prisma = require('../config/database');
   await prisma.user.update({
     where: { id: req.userId },
-    data:  { fcmToken: fcmToken.slice(0, 500) },
+    data:  { latitude: lat, longitude: lon },
   });
   return res.json({ success: true });
+}));
+
+// Trigger manuale notifiche offerte (test) — solo admin
+router.post('/notify-promos', adminOnly, asyncHandler(async (req, res) => {
+  const { notifyNearbyPromos } = require('../services/promoNotify.service');
+  const result = await notifyNearbyPromos();
+  return res.json({ success: true, data: result });
 }));
 
 // ─── Solo Admin ───────────────────────────────────────────────────────────────

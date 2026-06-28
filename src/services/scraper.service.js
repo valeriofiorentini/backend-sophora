@@ -256,6 +256,13 @@ function startScheduler() {
     } catch (err) {
       console.warn('Flyer OCR import error:', err.message);
     }
+    // Dopo aver aggiornato le promo, notifica gli utenti delle offerte vicine
+    try {
+      const { notifyNearbyPromos } = require('./promoNotify.service');
+      await notifyNearbyPromos();
+    } catch (err) {
+      console.warn('Promo notify error:', err.message);
+    }
   });
 
   console.log('📅 Scheduler attivo: scraper + OCR volantini, ogni giorno alle 06:00');

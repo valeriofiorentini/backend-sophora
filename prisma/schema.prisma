@@ -25,6 +25,9 @@ model User {
   yearlyBudget   Float?
   deviceToken    String?
   fcmToken       String?   // Firebase Cloud Messaging token per push notification
+  latitude       Float?    // ultima posizione nota (per offerte vicine)
+  longitude      Float?
+  lastPromoNotifyAt DateTime? // ultima notifica offerte inviata (anti-spam)
   googleId       String?   @unique
   b2bDataSharing Boolean   @default(true) // GDPR opt-out: se false non contribuisce a PriceHistory B2B
   createdAt      DateTime  @default(now())

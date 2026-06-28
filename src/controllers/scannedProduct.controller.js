@@ -167,11 +167,28 @@ async function getByTimestamp(req, res) {
 }
 
 async function deleteById(req, res) {
-  const sp = await prisma.scannedProduct.findUnique({ where: { id: req.params.id } });
-  if (!sp || sp.userId !== req.userId) return error(res, 'Non trovato o non autorizzato', 404);
+  const id = req.params.id;
 
-  await prisma.scannedProduct.delete({ where: { id: req.params.id } });
-  return success(res, { message: 'Eliminato' });
+  // 1. Prova come prodotto scansionato (barcode)
+  const sp = await prisma.scannedProduct.findUnique({ where: { id } });
+  if (sp) {
+    if (sp.userId !== req.userId) return error(res, 'Non autorizzato', 403);
+    await prisma.scannedProduct.delete({ where: { id } });
+    return success(res, { message: 'Eliminato' });
+  }
+
+  // 2. La lista unisce anche le righe degli scontrini: se l'id è di un receiptItem,
+  //    elimina quella riga (prima dava 404 "Non trovato" → errore nell'app).
+  const ri = await prisma.receiptItem.findUnique({
+    where:   { id },
+    include: { receipt: { select: { userId: true } } },
+  });
+  if (ri && ri.receipt?.userId === req.userId) {
+    await prisma.receiptItem.delete({ where: { id } });
+    return success(res, { message: 'Eliminato' });
+  }
+
+  return error(res, 'Non trovato o non autorizzato', 404);
 }
 
 function generateReportHtml(report, userId) {

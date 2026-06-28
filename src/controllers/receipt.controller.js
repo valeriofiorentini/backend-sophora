@@ -239,8 +239,18 @@ async function scanReceipt(req, res) {
     // Prima si usava gpt-4o-mini per risparmiare, ma su scontrini reali (foto
     // storte, 60+ righe) sbagliava troppo: nomi alterati e prezzi errati.
     // L'accuratezza dell'estrazione È il valore dell'app → vale i ~$0.003/scontrino.
-    const firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
-    const response   = await callOcrApi(firstModel, messages);
+    let firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
+    // Resilienza: se il modello primario dà errore API (modello non disponibile,
+    // response_format non supportato, rate limit…) ricade su gpt-4o, già provato.
+    let response;
+    try {
+      response = await callOcrApi(firstModel, messages);
+    } catch (primaryErr) {
+      if (firstModel === OCR_MODEL_FALLBACK) throw primaryErr; // già su gpt-4o: rilancia
+      console.warn(`[receipt] modello primario ${firstModel} fallito (${primaryErr.message}) → fallback ${OCR_MODEL_FALLBACK}`);
+      firstModel = OCR_MODEL_FALLBACK;
+      response = await callOcrApi(OCR_MODEL_FALLBACK, messages);
+    }
     const rawContent = response.choices[0].message.content;
 
     let parsedFirst;

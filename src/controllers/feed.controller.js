@@ -46,6 +46,7 @@ async function createFeed(req, res) {
       storeLocation,
       rating,
       image,
+      isApproved: true,
     },
     include: { user: { select: { id: true, name: true, avatar: true } } },
   });

@@ -46,12 +46,18 @@ async function processFlyerAI(req, res) {
 
   const { latitude, longitude } = req.body;
 
-  // Upload to S3 first
-  let imageUrl;
+  // Upload to S3 (opzionale — se le credenziali AWS mancano si usa null)
+  let imageUrl = null;
   try {
     imageUrl = await uploadToS3(req.file, 'flyers');
-  } catch {
-    return error(res, 'Errore upload', 500);
+  } catch (uploadErr) {
+    console.warn('[Flyer] S3 upload fallito, continuo senza immagine:', uploadErr.message);
+  }
+
+  // GPT-4o ha bisogno dell'URL o del base64 — se S3 non disponibile usiamo base64
+  if (!imageUrl) {
+    const b64 = req.file.buffer.toString('base64');
+    imageUrl = `data:${req.file.mimetype};base64,${b64}`;
   }
 
   let parsed;

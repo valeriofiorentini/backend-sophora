@@ -17,7 +17,7 @@ async function getFeeds(req, res) {
     take: parseInt(limit),
   });
 
-  return success(res, { feeds });
+  return success(res, { feeds, feed: feeds });
 }
 
 async function createFeed(req, res) {

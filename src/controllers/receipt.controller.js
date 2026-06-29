@@ -267,17 +267,33 @@ const STRUCTURE_PROMPT = `Ti do il TESTO GREZZO di uno scontrino italiano, già 
 
 REGOLE:
 1. NON cambiare i nomi: copia "name" ESATTAMENTE come appare nel testo (al massimo espandi una troncatura ovvia, es. "PROSC."→"Prosciutto"). MAI inventare o sostituire marchi (Frosta resta Frosta, Yoga resta Yoga).
-2. Ogni riga prodotto è: DESCRIZIONE … IVA% … PREZZO. Il PREZZO è l'ULTIMO numero della riga (es. 3,79). La % IVA (4,00% / 10,00% / 22,00%) NON è un prezzo.
+
+2. COLONNE SCONTRINO — CRITICO: ogni prodotto occupa tipicamente 3 colonne: DESCRIZIONE | IVA% | PREZZO.
+   L'OCR può restituirle TUTTE SULLA STESSA RIGA (normale) o su RIGHE SEPARATE (quando le colonne sono distanziate).
+   - SULLA STESSA RIGA: "KINDER CIOCC.ICE CRE  10,00%  3,79" → prezzo = 3,79 (ultimo numero, NON 10,00)
+   - SU RIGHE SEPARATE: se vedi 3 righe consecutive "NOME PRODOTTO" / "10,00%" / "3,79" → sono UN solo prodotto; prezzo = 3,79 (la riga con % IVA è solo l'aliquota, non il prezzo).
+   REGOLA: il PREZZO è sempre il numero che NON è seguito da "%" e che è coerente con il totale. Aliquote IVA comuni: 4,00% / 10,00% / 22,00% — non sono mai prezzi.
+
 3. SCONTI: una riga con prezzo NEGATIVO (es. -1,50) o che inizia con "SCONTO"/"VOLANTINO"/"PROMO"/"TAGLIO PREZZO" è uno sconto del prodotto PRECEDENTE → mettilo nel suo "discount" (valore positivo). NON è un item separato.
-4. REPARTI: header come "PANE - 2,09 -" o "GASTRONOMIA - 11,42 -" NON sono prodotti: il prodotto è la riga SOTTO (es. dopo "PANE - 2,09 -" c'è "LARIANO 2,09" → item "Lariano" 2.09). Per la gastronomia usa prefisso "Gastronomia: ".
-5. ESCLUDI: nome operatore/cassiere (es. "DANIELE F."), numero documento, "SUBTOTALE", "TOTALE COMPLESSIVO", "DI CUI IVA", "OFFERTA", "Pagamento", "Importo pagato", righe IVA da sole.
-6. TOTALI: "totalAmount" = il numero accanto a "TOTALE COMPLESSIVO" (è il totale pagato; cerca QUESTA riga in fondo). "totalDiscount" = il risparmio totale: somma di TUTTI gli sconti (per articolo + sconti finali tipo "SCONTO 10%"). Se vedi "OFFERTA"/"RISPARMIATO" con un importo, è il risparmio.
-   Se nel testo il fondo manca (niente "TOTALE COMPLESSIVO"), metti totalAmount = null (NON inventare un totale).
-   MARCATORE "=== PARTE 2 … ===": separa due metà della stessa foto. SOLO le righe immediatamente intorno a quel marcatore possono essere ripetute per la sovrapposizione: in quel punto includi ogni prodotto UNA volta sola. ATTENZIONE: altrove i duplicati sono VERI (es. "GRANAROLO STRACCHINO 2,19" due volte = 2 prodotti distinti) → NON eliminarli.
-7. Includi TUTTI i prodotti con un prezzo (anche buste/sacchetti). Non saltarne nessuno.
-8. CATEGORIA — per ogni prodotto aggiungi "category" scegliendo ESATTAMENTE una di queste 10 (servono per la dispensa): frutta_verdura, carne_pesce, latticini, pane_pasta, bevande, dolci_snack, surgelati, dispensa, igiene_casa, altro.
-   Esempi: Banane/Rucola/Cetrioli/Albicocche→frutta_verdura; Prosciutto/Mortadella/Bacon/Saltimbocca/Tonno→carne_pesce; Parmalat/Yogurt/Stracchino/Edamer/Uova/Müller→latticini; Lariano/Pane/Crostata→pane_pasta; Yoga Succo/Acqua/Nescafe/The→bevande; Kinder→dolci_snack; Frosta Fishburger/surgelati→surgelati; Olio/Sale/Pomodoro/Conserve→dispensa; Detersivo/Carta igienica→igiene_casa. Se davvero incerto: altro.
-9. Se un dato manca, usa null. Stessa identica struttura JSON del formato qui sotto.
+   REGOLA "VOLANTINO XX": il numero dopo VOLANTINO (es. "VOLANTINO 17") è il CODICE offerta, NON l'importo. L'importo è nella colonna Prezzo.
+
+4. QUANTITÀ MOLTIPLICATORE: se prima di un prodotto c'è una riga tipo "2 X 1,74" o "3 X 0,99" su riga separata, significa che il prodotto SUCCESSIVO ha quantity=2 (o 3) e unitPrice=1,74 (il totalPrice sarà 2×1,74=3,48). Imposta quantity e unitPrice di conseguenza.
+   ATTENZIONE: "X 10" o "X 6" DENTRO il nome prodotto (es. "NESCAFEGINSENG X 10", "BRAVO C.IGIENICA X6") è parte della DESCRIZIONE (10 capsule, 6 rotoli) — NON è un moltiplicatore di quantità; il prodotto ha quantity=1.
+
+5. REPARTI: header come "PANE - 2,09 -" o "GASTRONOMIA - 11,42 -" NON sono prodotti: il prodotto è la riga SOTTO (es. dopo "PANE - 2,09 -" c'è "LARIANO 2,09" → item "Lariano" 2.09 con category pane_pasta). Per la gastronomia usa prefisso "Gastronomia: ".
+
+6. ESCLUDI: nome operatore/cassiere (es. "DANIELE F."), numero documento, "SUBTOTALE", "TOTALE COMPLESSIVO", "DI CUI IVA", "OFFERTA" senza prezzo, "Pagamento", "Importo pagato", righe con SOLO la % IVA.
+
+7. TOTALI: "totalAmount" = il numero accanto a "TOTALE COMPLESSIVO". "totalDiscount" = somma di TUTTI gli sconti (articolo + sconti finali tipo "SCONTO 10%").
+   Se nel testo il fondo manca, metti totalAmount = null.
+   MARCATORE "=== PARTE 2 … ===": separa due metà della stessa foto. Intorno a quel punto includi ogni prodotto UNA sola volta. Altrove i duplicati sono VERI (es. "GRANAROLO STRACCHINO 2,19" due volte = 2 prodotti distinti).
+
+8. Includi TUTTI i prodotti con un prezzo (anche buste/sacchetti). Non saltarne nessuno.
+
+9. CATEGORIA — per ogni prodotto aggiungi "category" scegliendo ESATTAMENTE una di queste 10: frutta_verdura, carne_pesce, latticini, pane_pasta, bevande, dolci_snack, surgelati, dispensa, igiene_casa, altro.
+   Esempi: Banane/Rucola/Cetrioli/Albicocche/Pomodoro/Meloni/Pesche→frutta_verdura; Prosciutto/Mortadella/Bacon/Saltimbocca/Speck/Pollo→carne_pesce; Parmalat/Yogurt/Kefir/Stracchino/Edamer/Uova/Müller/Granarolo→latticini; Lariano/Pane/Crostata/Torretta→pane_pasta; Yoga Succo/Acqua/Nescafe/The/San Benedetto→bevande; Kinder→dolci_snack; Frosta Fishburger→surgelati; Olio/Sale/Conserve→dispensa; Detersivo/Carta igienica→igiene_casa. Se incerto: altro.
+
+10. Se un dato manca, usa null.
 
 Struttura JSON: {"storeName":"…","storeChain":"… o null","storeAddress":"… o null","receiptDate":"YYYY-MM-DD o null","items":[{"name":"…","rawName":"riga grezza","quantity":1,"unitPrice":0.00,"totalPrice":0.00,"discount":0.00,"category":"una delle 10"}],"totalAmount":0.00,"totalDiscount":0.00,"paymentMethod":"… o null"}`;
 

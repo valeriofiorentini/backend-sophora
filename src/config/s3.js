@@ -44,6 +44,10 @@ function uploadReceiptImage(field) {
 }
 
 async function uploadToS3(file, folder = 'uploads') {
+  if (!process.env.AWS_REGION || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_S3_BUCKET) {
+    console.warn('[S3] Credenziali AWS mancanti — immagine non caricata');
+    return null;
+  }
   const key = `${folder}/${uuidv4()}${path.extname(file.originalname)}`;
   await s3.send(new PutObjectCommand({
     Bucket: process.env.AWS_S3_BUCKET,

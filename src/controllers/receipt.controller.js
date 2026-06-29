@@ -273,7 +273,11 @@ REGOLE:
    Il PREZZO è l'ultimo numero sulla riga che NON è seguito da "%". Le aliquote IVA (4%, 10%, 22%) NON sono prezzi.
    ATTENZIONE storpiature OCR nelle aliquote IVA: "72,00%" → leggi come 22,00%; "10:00%" → 10,00%; "4.00%" → 4,00%. Se vedi un numero seguito da % che assomiglia a un'aliquota IVA italiana (4, 10, 22), è l'IVA — non il prezzo.
 
-3. DUE PRODOTTI SU UNA RIGA: se l'OCR ha messo due nomi di prodotto sulla stessa riga con UN SOLO prezzo (es. "KINDER ICE CRE   FROSTA FISHBURGER   10,00%  3,79"), sono DUE prodotti distinti. Il prezzo (3,79) appartiene al SECONDO; il PRIMO ha prezzo null (da ricavare dal contesto o lasciare null). Separa sempre i prodotti: includi entrambi come item distinti.
+3. DUE PRODOTTI SU UNA RIGA: se l'OCR ha fuso due nomi di prodotto sulla stessa riga con UN SOLO prezzo (es. "KINDER ICE CRE   FROSTA FISHBURGER   10,00%  3,79"), sono DUE prodotti distinti:
+   - Il prezzo visibile sulla riga (3,79) appartiene al PRIMO prodotto (KINDER).
+   - Se la riga IMMEDIATAMENTE SUCCESSIVA è solo un numero (es. "3,49" senza nome), quello è il prezzo del SECONDO prodotto (FROSTA).
+   - Se non c'è un prezzo standalone dopo, il secondo prodotto ha prezzo null e va OMESSO (meglio perderlo che metterlo a 0).
+   Includi sempre il PRIMO prodotto con il suo prezzo. Includi il SECONDO solo se hai trovato il suo prezzo standalone.
 
 4. PREZZO TRONCATO: se un prezzo inizia con virgola (es. ",99" o ",49"), l'OCR ha perso la prima cifra. Ricostruisci: se il totale e il contesto suggeriscono un valore tipo 1,99 → scrivi 1.99; se potrebbe essere 0,99 → 0.99. Usa il contesto del totale per scegliere la cifra più probabile.
 

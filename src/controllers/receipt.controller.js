@@ -517,6 +517,9 @@ async function scanReceipt(req, res) {
     // È una riga-sconto se il nome è un'etichetta di sconto E non ha un prezzo
     // prodotto valido (>0). I prodotti veri hanno sempre un prezzo positivo.
     if (DISCOUNT_LABEL.test(name) && (!Number.isFinite(price) || price <= 0)) return false;
+    // OCR a volte fonde due prodotti su una riga → il primo finisce con prezzo 0/null.
+    // Un prodotto a €0 non esiste sugli scontrini: rimuoviamo queste ghost row.
+    if (!Number.isFinite(price) || price <= 0) return false;
     return true;
   });
   parsed.items = items;

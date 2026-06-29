@@ -44,9 +44,9 @@ function uploadReceiptImage(field) {
 }
 
 async function uploadToS3(file, folder = 'uploads') {
+  // Se S3 non configurato, salva sul disco locale del server
   if (!process.env.AWS_REGION || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_S3_BUCKET) {
-    console.warn('[S3] Credenziali AWS mancanti — immagine non caricata');
-    return null;
+    return saveLocalFile(file, folder);
   }
   const key = `${folder}/${uuidv4()}${path.extname(file.originalname)}`;
   await s3.send(new PutObjectCommand({
@@ -56,6 +56,17 @@ async function uploadToS3(file, folder = 'uploads') {
     ContentType: file.mimetype,
   }));
   return `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+}
+
+function saveLocalFile(file, folder) {
+  const fs = require('fs');
+  const uploadDir = path.join(__dirname, '../../uploads', folder);
+  fs.mkdirSync(uploadDir, { recursive: true });
+  const filename = `${uuidv4()}${path.extname(file.originalname || '.jpg')}`;
+  const filepath = path.join(uploadDir, filename);
+  fs.writeFileSync(filepath, file.buffer);
+  const baseUrl = process.env.BASE_URL || 'http://167.233.96.153:3000';
+  return `${baseUrl}/uploads/${folder}/${filename}`;
 }
 
 async function deleteFromS3(url) {

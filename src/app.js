@@ -34,7 +34,11 @@ const { ensureCollections } = require('./services/qdrant.service');
 const { triggerBatchForecast } = require('./services/ml.service');
 const prisma = require('./config/database');
 
+const path = require('path');
 const app = express();
+
+// Serve file statici (foto caricate localmente quando S3 non è configurato)
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Express dietro un reverse proxy (Railway/Render/Nginx): necessario per ottenere
 // l'IP reale del client (rate limit) e per il corretto funzionamento di HTTPS.

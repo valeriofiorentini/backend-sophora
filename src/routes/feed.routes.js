@@ -6,6 +6,7 @@ const { upload } = require('../config/s3');
 router.use(auth);
 router.get('/', c.getFeeds);
 router.post('/add', upload.single('image'), c.createFeed);
+router.put('/:id', c.updateFeed);
 router.delete('/:id', c.deleteFeed);
 
 module.exports = router;

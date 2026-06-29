@@ -311,7 +311,8 @@ async function tryOcrSpacePipeline(imageBase64) {
     console.warn('[receipt] OCR.space testo troppo corto → fallback vision');
     return null;
   }
-  console.info(`[receipt] OCR.space OK (${text.length} char) → struttura con LLM`);
+  console.info(`[receipt] OCR OK (${text.length} char) → struttura con LLM`);
+  console.info(`[receipt] OCR testo grezzo (prime 800 char):\n${text.slice(0, 800)}`);
   const messages = [{ role: 'user', content: `${STRUCTURE_PROMPT}\n\nTESTO SCONTRINO:\n"""\n${text}\n"""` }];
   try {
     let resp;

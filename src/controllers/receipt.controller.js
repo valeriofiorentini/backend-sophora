@@ -297,6 +297,36 @@ REGOLE:
 
 Struttura JSON: {"storeName":"…","storeChain":"… o null","storeAddress":"… o null","receiptDate":"YYYY-MM-DD o null","items":[{"name":"…","rawName":"riga grezza","quantity":1,"unitPrice":0.00,"totalPrice":0.00,"discount":0.00,"category":"una delle 10"}],"totalAmount":0.00,"totalDiscount":0.00,"paymentMethod":"… o null"}`;
 
+// PaddleOCR separa le 3 colonne dello scontrino su righe distinte:
+//   NOME PRODOTTO      ← riga 1
+//   22,00%             ← riga 2 (aliquota IVA — può usare . o , come decimale)
+//   3,79               ← riga 3 (prezzo)
+// Questo pre-processore riunisce le 3 righe in 1 riga sola così l'LLM
+// non confonde l'aliquota con il prezzo.
+function reassembleReceiptLines(text) {
+  // Riconosce righe tipo "22,00%" o "4.00%" o "10,00%" (solo aliquote IVA italiane)
+  const ivaRe = /^\d{1,2}[.,]\d{2}%$/;
+  // Riconosce un prezzo (positivo o negativo): "3,79" "-1,50" "71,81"
+  const priceRe = /^-?\d+[.,]\d{2}$/;
+  const lines = text.split('\n').map(l => l.trim());
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const cur = lines[i];
+    const next = lines[i + 1] || '';
+    const after = lines[i + 2] || '';
+    // Pattern: NOME / IVA% / PREZZO → unisci in una riga sola
+    if (cur && ivaRe.test(next) && priceRe.test(after)) {
+      out.push(`${cur} ${next} ${after}`);
+      i += 3;
+    } else {
+      if (cur) out.push(cur);
+      i++;
+    }
+  }
+  return out.join('\n');
+}
+
 // Pipeline completa: OCR.space → struttura con LLM. Ritorna il JSON parsato, o
 // null se OCR.space non è disponibile (così il chiamante usa il vision OCR).
 async function tryOcrSpacePipeline(imageBase64) {
@@ -311,8 +341,11 @@ async function tryOcrSpacePipeline(imageBase64) {
     console.warn('[receipt] OCR.space testo troppo corto → fallback vision');
     return null;
   }
-  console.info(`[receipt] OCR OK (${text.length} char) → struttura con LLM`);
-  console.info(`[receipt] OCR testo grezzo (prime 800 char):\n${text.slice(0, 800)}`);
+  // Riassembla le 3 colonne su riga singola (PaddleOCR le separa)
+  const rawLen = text.length;
+  text = reassembleReceiptLines(text);
+  console.info(`[receipt] OCR OK (${rawLen} char → ${text.length} dopo riassemblaggio) → struttura con LLM`);
+  console.info(`[receipt] OCR testo riassemblato (prime 600 char):\n${text.slice(0, 600)}`);
   const messages = [{ role: 'user', content: `${STRUCTURE_PROMPT}\n\nTESTO SCONTRINO:\n"""\n${text}\n"""` }];
   try {
     let resp;

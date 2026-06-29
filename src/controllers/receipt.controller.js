@@ -341,9 +341,14 @@ function reassembleReceiptLines(text) {
   return out.join('\n');
 }
 
-// Pipeline completa: OCR.space → struttura con LLM. Ritorna il JSON parsato, o
-// null se OCR.space non è disponibile (così il chiamante usa il vision OCR).
+// Pipeline completa: OCR testo → struttura con LLM. Ritorna il JSON parsato, o
+// null se il provider è "vision" oppure OCR non disponibile (usa il vision OCR).
 async function tryOcrSpacePipeline(imageBase64) {
+  // OCR_PROVIDER=vision → bypassa il text OCR e usa direttamente la vision
+  if ((process.env.OCR_PROVIDER || '').toLowerCase() === 'vision') {
+    console.info('[receipt] OCR_PROVIDER=vision → vision OCR diretto');
+    return null;
+  }
   let text;
   try {
     text = await extractReceiptText(imageBase64);
@@ -352,15 +357,49 @@ async function tryOcrSpacePipeline(imageBase64) {
     return null;
   }
   if (!text || text.replace(/\s/g, '').length < 40) {
-    console.warn('[receipt] OCR.space testo troppo corto → fallback vision');
+    console.warn('[receipt] OCR testo troppo corto → fallback vision');
+    return null;
+  }
+  // Qualità check: se >40% delle righe non-vuote mancano di un prezzo leggibile
+  // (OCR ha letto nome+IVA ma non il prezzo), il testo è troppo frammentato.
+  // In quel caso fallback alla vision che legge la colonna prezzi direttamente.
+  const nonEmpty = text.split('\n').filter(l => l.trim().length > 3);
+  const withPrice = nonEmpty.filter(l => /\d+[.,]\d{2}/.test(l));
+  if (nonEmpty.length > 5 && withPrice.length / nonEmpty.length < 0.35) {
+    console.warn(`[receipt] OCR testo frammentato (${withPrice.length}/${nonEmpty.length} righe con prezzo) → vision`);
     return null;
   }
   // Riassembla le 3 colonne su riga singola (PaddleOCR le separa)
   const rawLen = text.length;
   text = reassembleReceiptLines(text);
-  console.info(`[receipt] OCR OK (${rawLen} char → ${text.length} dopo riassemblaggio) → struttura con LLM`);
-  console.info(`[receipt] OCR testo riassemblato (prime 600 char):\n${text.slice(0, 600)}`);
-  const messages = [{ role: 'user', content: `${STRUCTURE_PROMPT}\n\nTESTO SCONTRINO:\n"""\n${text}\n"""` }];
+  console.info(`[receipt] OCR OK (${rawLen} char → ${text.length} dopo riassemblaggio) → vision+OCR ibrido`);
+
+  // Strategia ibrida: manda TESTO OCR + IMMAGINE al modello vision.
+  // Il testo OCR ha i nomi esatti (niente allucinazioni di marchi).
+  // L'immagine serve per leggere i prezzi che l'OCR ha perso o storpiato.
+  // Il modello usa il testo come "ancora" per i nomi e l'immagine per i prezzi.
+  const hybridPrompt = `${RECEIPT_PROMPT}
+
+ATTENZIONE — MODALITÀ IBRIDA: Ti fornisco sia l'IMMAGINE che il TESTO OCR già estratto.
+Il testo OCR ha i nomi prodotto ESATTI (fidati di esso per i nomi, NON inventare).
+L'immagine ha i prezzi nella colonna destra — usala per leggere i prezzi corretti.
+Regola: per ogni prodotto, il NOME viene dal testo OCR, il PREZZO viene dall'immagine.
+
+TESTO OCR (nomi esatti, prezzi potrebbero essere incompleti):
+"""
+${text}
+"""`;
+
+  const mimeType = imageBase64.includes('data:') ? imageBase64.split(';')[0].split(':')[1] : 'image/jpeg';
+  const b64data  = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+  const messages = [{
+    role: 'user',
+    content: [
+      { type: 'text',       text: hybridPrompt },
+      { type: 'image_url',  image_url: { url: `data:${mimeType};base64,${b64data}` } },
+    ],
+  }];
+
   try {
     let resp;
     try {
@@ -370,7 +409,7 @@ async function tryOcrSpacePipeline(imageBase64) {
     }
     return parseOcrJson(resp.choices[0].message.content);
   } catch (e) {
-    console.warn('[receipt] strutturazione OCR.space fallita → fallback vision:', e.message);
+    console.warn('[receipt] pipeline ibrida fallita → fallback vision puro:', e.message);
     return null;
   }
 }

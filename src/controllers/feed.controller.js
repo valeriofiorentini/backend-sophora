@@ -21,8 +21,16 @@ async function getFeeds(req, res) {
 }
 
 async function createFeed(req, res) {
-  const { type, description, storeName, storeLocation, rating } = req.body;
-  if (!type) return error(res, 'type obbligatorio (discount | review)');
+  const b = req.body;
+  // Supporta sia i campi nuovi (name/isDiscount/location) che quelli legacy (type/storeName/storeLocation)
+  const storeName    = b.name      || b.storeName    || null;
+  const description  = b.description || null;
+  const rating       = b.rating ? parseFloat(b.rating) : null;
+  const type         = b.type || (b.isDiscount === 'true' || b.isDiscount === true ? 'discount' : 'review');
+  let   storeLocation = b.storeLocation || null;
+  if (!storeLocation && b.location) {
+    try { storeLocation = typeof b.location === 'string' ? b.location : JSON.stringify(b.location); } catch {}
+  }
 
   let image;
   if (req.file) {
@@ -36,13 +44,13 @@ async function createFeed(req, res) {
       description,
       storeName,
       storeLocation,
-      rating: rating ? parseFloat(rating) : null,
+      rating,
       image,
     },
     include: { user: { select: { id: true, name: true, avatar: true } } },
   });
 
-  return success(res, { feed }, 201);
+  return success(res, { feed, success: true }, 201);
 }
 
 async function deleteFeed(req, res) {

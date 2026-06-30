@@ -32,9 +32,12 @@ async function createFeed(req, res) {
     try { storeLocation = typeof b.location === 'string' ? b.location : JSON.stringify(b.location); } catch {}
   }
 
-  let image;
-  if (req.file) {
-    image = await uploadToS3(req.file, 'feeds');
+  let image = null;
+  const files = req.files || (req.file ? [req.file] : []);
+  if (files.length > 0) {
+    const urls = await Promise.all(files.map(f => uploadToS3(f, 'feeds')));
+    const valid = urls.filter(Boolean);
+    image = valid.length === 1 ? valid[0] : valid.length > 1 ? JSON.stringify(valid) : null;
   }
 
   const feed = await prisma.feed.create({

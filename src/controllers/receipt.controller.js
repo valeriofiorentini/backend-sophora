@@ -158,7 +158,7 @@ REGOLE CRITICHE — seguile nell'ordine:
 Struttura JSON da restituire:
 {
   "storeName": "nome negozio completo o null",
-  "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros, Pim, Iper, MD, Todis, Pewex, Bennet o null",
+  "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros, Pim, Iper, Iper Triscount, MD, Todis, Pewex, Bennet, Sigma, Gigante, Interspar o null",
   "storeAddress": "indirizzo completo o null",
   "receiptDate": "YYYY-MM-DD o null",
   "items": [

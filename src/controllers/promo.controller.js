@@ -1,6 +1,11 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { haversineKm: distanceKm, bboxWhere } = require('../services/geo.service');
+const redis = require('../services/redis.service');
+
+// TTL cache promos: 2 minuti — le promo cambiano poche volte al giorno
+// (scraper notturno + post community), la lettura è la query più calda dell'app.
+const PROMOS_CACHE_TTL = 120;
 
 // "Conad Superstore" / "CONAD CITY" → "conad" (parola chiave catena per il match con Store)
 function chainKey(name) {
@@ -71,6 +76,16 @@ async function getPromos(req, res) {
   const r   = Math.min(parseFloat(radius) || 50, 500);
   const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
 
+  // Cache per zona: coordinate arrotondate a ~1km (2 decimali) così utenti
+  // vicini condividono la stessa entry invece di generarne una a testa.
+  const cacheKey = `promos:${hasCoords ? `${lat.toFixed(2)}:${lon.toFixed(2)}` : 'global'}:${r}:${chain || ''}:${pageNum}:${pageSize}`;
+  // NB: redis.service salva valori raw → serializziamo noi (su Redis vero un
+  // oggetto diventerebbe "[object Object]"; il fallback in-memory lo maschererebbe)
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached) {
+    try { return success(res, JSON.parse(cached)); } catch { /* cache corrotta: rigenera */ }
+  }
+
   const promos = await prisma.promo.findMany({
     where: {
       validUntil: { gt: now },
@@ -106,13 +121,15 @@ async function getPromos(req, res) {
   const safePage = Math.min(pageNum, totalPages);
   const paginated = result.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  return success(res, {
+  const payload = {
     promos: paginated,
     total,
     page: safePage,
     totalPages,
     pageSize,
-  });
+  };
+  redis.set(cacheKey, JSON.stringify(payload), PROMOS_CACHE_TTL).catch(() => {});
+  return success(res, payload);
 }
 
 async function getTodayPromos(req, res) {

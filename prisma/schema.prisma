@@ -417,6 +417,7 @@ model Promo {
   discount    String?
   imageUrl    String?
   source      String   @default("user")
+  feedId      String?  // post community che ha generato la promo (per il cleanup)
   validFrom   DateTime @default(now())
   validUntil  DateTime
   latitude    Float?
@@ -427,6 +428,7 @@ model Promo {
   @@index([validUntil])
   // Indice per il bounding box delle query "offerte vicino a te"
   @@index([latitude, longitude])
+  @@index([feedId])
 }
 
 // ─── V4 Gamification ──────────────────────────────────────────────────────────

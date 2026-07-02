@@ -146,6 +146,25 @@ const groupJoinSchema = z.object({
   code: reqStr(20),
 }).passthrough();
 
+// ─── Nutrizione ───────────────────────────────────────────────────────────────
+const nutritionProfileSchema = z.object({
+  dietType:      z.array(z.string().max(40)).max(10).optional(),
+  allergens:     z.array(z.string().max(40)).max(30).optional(),
+  dailyCalories: optNum(0, 10_000),
+  dailyCarbs:    optNum(0, 2_000),
+  dailyProtein:  optNum(0, 2_000),
+  dailyFat:      optNum(0, 2_000),
+}).passthrough();
+
+const checkCartSchema = z.object({
+  barcodes: z.array(z.string().max(64)).min(1).max(200),
+}).passthrough();
+
+// ─── Preferiti ────────────────────────────────────────────────────────────────
+const favouriteSchema = z.object({
+  storeId: reqStr(64),
+}).passthrough();
+
 module.exports = {
   signupSchema,
   loginSchema,
@@ -159,4 +178,7 @@ module.exports = {
   scannedProductSchema,
   groupCreateSchema,
   groupJoinSchema,
+  nutritionProfileSchema,
+  checkCartSchema,
+  favouriteSchema,
 };

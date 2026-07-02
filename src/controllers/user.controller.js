@@ -450,6 +450,20 @@ async function logout(req, res) {
 
 // ─── deleteAccount ────────────────────────────────────────────────────────────
 async function deleteAccount(req, res) {
+  // Se l'account ha una password, richiedila come conferma (il JWT da solo
+  // non basta: un telefono lasciato sbloccato non deve poter cancellare tutto).
+  // Account Google/guest (senza password) procedono col solo JWT.
+  const me = await prisma.user.findUnique({
+    where:  { id: req.userId },
+    select: { password: true },
+  });
+  if (me?.password) {
+    const pwd = req.body?.password;
+    if (!pwd || !(await bcrypt.compare(String(pwd), me.password))) {
+      return error(res, 'Password non corretta', 401);
+    }
+  }
+
   // GDPR Art. 17 — Right to erasure
   // 1. Anonimizza i dati di PriceHistory (contributi prezzo — non hanno userId ma provengono da scontrini)
   //    I FineTuningSample sono cancellati in cascade grazie alla relazione User → FineTuningSample
@@ -457,6 +471,10 @@ async function deleteAccount(req, res) {
   // 3. Elimina l'utente (cascade su tutte le relazioni con onDelete: Cascade)
 
   await prisma.user.delete({ where: { id: req.userId } });
+
+  // Invalida subito la cache auth: il token non deve più passare
+  const { invalidateAuthCache } = require('../middleware/auth');
+  invalidateAuthCache(req.userId);
 
   return success(res, { message: 'Account eliminato. Tutti i tuoi dati sono stati rimossi.' });
 }

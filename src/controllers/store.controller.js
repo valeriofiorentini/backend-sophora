@@ -1,6 +1,6 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
-const { haversineKm: haversine } = require('../services/geo.service');
+const { haversineKm: haversine, bboxWhere } = require('../services/geo.service');
 
 async function getStoresByLocation(req, res) {
   const { a, latitude, longitude, radius = 10, filter } = req.query;
@@ -22,15 +22,9 @@ async function getStoresByLocation(req, res) {
   }
   const r = parseFloat(radius);
 
-  // Rough bounding box to limit DB query before haversine
-  const latDelta = r / 111;
-  const lonDelta = r / (111 * Math.cos((lat * Math.PI) / 180));
-
+  // Bounding box (usa l'indice latitude/longitude) prima del filtro haversine
   let stores = await prisma.store.findMany({
-    where: {
-      latitude: { gte: lat - latDelta, lte: lat + latDelta },
-      longitude: { gte: lon - lonDelta, lte: lon + lonDelta },
-    },
+    where: bboxWhere(lat, lon, r),
     include: { _count: { select: { products: true } } },
   });
 

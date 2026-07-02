@@ -1,420 +1,29 @@
 /**
- * receipt.controller.js
+ * receipt.controller.js — controller HTTP scontrini.
  *
- * Fix applicati:
- *  - scanReceipt: tutto il salvataggio DB dentro $transaction → niente dati parziali
- *  - scanReceipt: createMany per i receiptItem (1 query invece di N)
- *  - scanReceipt: validazione MIME type e input
- *  - getReceiptStats: aggregazioni DB-side (_sum, _count) invece di caricare tutto in memoria
- *  - getReceiptStats: bounds check su `months` (max 24)
- *  - getReceiptById / deleteReceipt: try/catch esplicito
- *  - PriceHistory: upsert con ignoreConflicts per evitare duplicati da scan ripetuti
+ * La logica pesante vive nei moduli dedicati:
+ *   services/receiptOcr.service  → pipeline OCR (ibrida + vision, doppio modello)
+ *   services/pantrySync.service  → sync dispensa con dedup per sourceReceiptId
+ *   prompts/receipt.prompts      → prompt OCR
+ *   utils/sanitize               → pulizia stringhe/date/numeri dall'OCR
+ *
+ * Qui restano solo: validazione richiesta, orchestrazione, salvataggio DB.
  */
 
-const OpenAI  = require('openai');
-const axios   = require('axios');
 const prisma  = require('../config/database');
-const { uploadToS3 }  = require('../config/s3');
 const { success, error } = require('../utils/response');
 const { awardPoints }    = require('./gamification.controller');
 const { checkReceiptLimit } = require('../utils/planLimits');
-
-const openai = new OpenAI({
-  apiKey:  process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined,
-});
+const { runReceiptOcr }  = require('../services/receiptOcr.service');
+const { populatePantryFromReceipt, VALID_CATEGORIES } = require('../services/pantrySync.service');
+const {
+  cleanStr, cleanDate, clampQuantity, clampPrice, clampPercent, normalizeProductKey,
+} = require('../utils/sanitize');
 
 // ─── Tipi MIME accettati ───────────────────────────────────────────────────────
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 
-// ─── Modelli OCR ──────────────────────────────────────────────────────────────
-// Siamo su OpenRouter → possiamo scegliere qualsiasi modello.
-// Scelta: gpt-4o come primario. Testato sul campo (key di produzione):
-//   - openai/gpt-4o          → ~900ms, JSON sempre pulito, vision forte ✓
-//   - google/gemini-2.5-pro  → ~4s, è un "thinking model": brucia token nel
-//                              ragionamento, lento e a volte tronca il JSON ✗
-//   - google/gemini-2.5-flash→ veloce ma sempre thinking, meno prevedibile
-// Il problema originale era gpt-4o-MINI (debole), non gpt-4o. gpt-4o risolve
-// accuratezza ed è affidabile. Override via env: OCR_MODEL / OCR_MODEL_FALLBACK.
-const ON_OPENROUTER      = !!process.env.OPENROUTER_API_KEY;
-// Primario: Claude Sonnet 4 — il più FEDELE nell'OCR (gpt-4o tendeva a "indovinare"
-// i marchi: FROSTA→Findus/Ringo, LARIANO→Laranjina). Claude trascrive quello che vede.
-// Fallback: gpt-4o (modello diverso, secondo parere). Override via env OCR_MODEL.
-const OCR_MODEL_ACCURATE = process.env.OCR_MODEL
-  || (ON_OPENROUTER ? 'anthropic/claude-sonnet-4' : 'gpt-4o');   // primario (massima fedeltà)
-const OCR_MODEL_FALLBACK = process.env.OCR_MODEL_FALLBACK
-  || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');               // secondo parere su modello diverso
-const OCR_MODEL_FAST     = OCR_MODEL_ACCURATE;               // retrocompat (non più mini)
-
-// Parser JSON robusto: modelli diversi a volte avvolgono l'output in ```json … ```
-// o aggiungono testo. Ripuliamo prima di JSON.parse così il cambio modello è sicuro.
-function parseOcrJson(raw) {
-  if (!raw) return null;
-  let s = String(raw).trim();
-  if (s.startsWith('```')) s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-  const first = s.indexOf('{');
-  const last  = s.lastIndexOf('}');
-  if (first !== -1 && last !== -1 && last > first) s = s.slice(first, last + 1);
-  return JSON.parse(s);
-}
-
-// V5: se il fine-tuned model è pronto, usa quello (supera entrambi)
-async function getOcrModel() {
-  if (process.env.FINETUNED_OCR_MODEL) return process.env.FINETUNED_OCR_MODEL;
-  try {
-    const job = await prisma.fineTuningJob.findFirst({
-      where:   { status: 'succeeded', fineTunedModel: { not: null } },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (job?.fineTunedModel) return job.fineTunedModel;
-  } catch {}
-  return null; // null = usa logica mini → 4o
-}
-
-/**
- * Chiama OpenAI OCR con il modello specificato.
- * `store: false` = Zero Data Retention (GDPR): OpenAI non usa i dati per training.
- */
-async function callOcrApi(model, messages) {
-  return openai.chat.completions.create({
-    model,
-    messages,
-    response_format: { type: 'json_object' },
-    // 8000 token: uno scontrino con ~90 prodotti sta dentro senza troncare il JSON.
-    // Con 4000 gli scontrini lunghi (60+ righe) venivano tagliati a metà → output corrotto.
-    max_tokens: 8000,
-    // temperature 0: estrazione deterministica, l'LLM NON inventa né traduce i nomi
-    // (es. "BANANE" restava "BANANE", non diventava "Bananes").
-    temperature: 0,
-    store: false,   // GDPR: Zero Data Retention — OpenAI non trattiene i dati
-    user: 'shopora-receipt-ocr', // tracking anonimo per abuse detection
-  });
-}
-
-// ─── Prompt OCR ───────────────────────────────────────────────────────────────
-const RECEIPT_PROMPT = `Sei un esperto di scontrini italiani. Analizza l'immagine e restituisci SOLO un JSON valido.
-
-REGOLE CRITICHE — seguile nell'ordine:
-
-⛔ REGOLA -1 — COSA LEGGERE: Leggi ESCLUSIVAMENTE la striscia di carta dello SCONTRINO. IGNORA TOTALMENTE tutto il resto nell'immagine: quaderni, fogli a quadretti, appunti o formule scritte a mano, libri, tavoli, mani, oggetti sullo sfondo. Se vedi testo scritto a mano, quadretti, disegni, formule matematiche → NON fanno parte dello scontrino, NON includerli come prodotti (es. NON inventare "Blocco Note", "Quaderno", ecc.). Ogni prodotto DEVE provenire da una riga stampata sullo scontrino.
-
-⛔ REGOLA 0 — FEDELTÀ ASSOLUTA AI MARCHI: Trascrivi i nomi ESATTAMENTE come sono stampati. NON sostituire MAI un marchio poco noto con uno più famoso o "più probabile". Errori GRAVISSIMI da NON fare mai: "FROSTA" → "Findus" (SBAGLIATO: resta Frosta), "LARIANO" → "Laranjina" (SBAGLIATO: resta Lariano), "CONSILIA" → "Benedetta" (SBAGLIATO: resta Consilia), "C.M.MEZZE NOCI" → "Mezze Penne" (SBAGLIATO: sono noci, non penne). Se non riconosci un marchio o una parola, lasciala IDENTICA a com'è stampata. NON indovinare, NON "correggere" verso qualcosa di più comune.
-
-0. COLONNE SCONTRINO: Lo scontrino italiano ha tipicamente 3 colonne: DESCRIZIONE | IVA% | Prezzo(€). La colonna IVA contiene percentuali come "4,00%", "10,00%", "22,00%" — NON sono prezzi! Il prezzo è SEMPRE l'ultimo numero sulla riga, nella colonna Prezzo(€). Non confondere mai la percentuale IVA con il prezzo del prodotto.
-
-   ESEMPIO CRITICO — scontrino PIM/Coop/Conad con colonne:
-   "BRAVO C.IGIENICA X6   22,00%   2,49"
-   → IVA = 22,00% (ignora), Prezzo = 2,49 € ✓  (NON 22,00 €!)
-   "C.STRACCHINOI 165G    4,00%    1,89"
-   → IVA = 4,00% (ignora), Prezzo = 1,89 € ✓  (NON 4,00 €!)
-
-   REGOLA ANTI-CONFUSIONE: se il "prezzo" che stai per scrivere è uguale a 4, 10 o 22 (con o senza decimali), FERMATI e rileggi la riga — stai quasi certamente leggendo la colonna IVA invece del prezzo reale. Cerca l'ultimo numero sulla riga che NON sia seguito da "%" — quello è il prezzo.
-
-   NOTA: alcuni scontrini (es. PIM) hanno un trattino "-" dopo il prezzo (es. "2,49-"). Il trattino indica che l'IVA è inclusa nel prezzo — ignoralo, il prezzo è 2,49.
-
-   ATTENZIONE PREZZI: Se un prezzo inizia con "4" o "4,xx" o "4.xx" verifica attentamente che non sia una lettura errata del "1" iniziale (es. "1,79" che sembra "4,79" su foto storta). Controlla sempre la coerenza col totale finale.
-
-1. SCONTI SU RIGA SEPARATA — REGOLA CRITICA: una riga è uno SCONTO (non un prodotto) quando ha queste caratteristiche: il PREZZO è NEGATIVO (es. -1,19) OPPURE il testo inizia con parole come "SCONTO", "TAGLIO PREZZO", "VOLANTINO", "PROMO", "RIDUZIONE", "ARTICOLO PREZZO FISSO".
-   Uno sconto NON è MAI un item dell'array "items". Va sommato nel campo "discount" del PRODOTTO PRECEDENTE (valore positivo: -1,19 → discount 1.19).
-   ⛔ NON inventare righe sconto: includi SOLO gli sconti che vedi DAVVERO stampati su QUESTO scontrino, con il loro importo reale. Non creare "items" con nome "Sconto…"/"Taglio Prezzo"/"Volantino" e prezzo 0. Se non c'è un prodotto precedente chiaro, ignora la riga.
-   REGOLA "VOLANTINO XX": il numero dopo VOLANTINO (es. "VOLANTINO 17") è il CODICE dell'offerta, NON l'importo. L'importo è il valore negativo nella colonna Prezzo(€) sulla stessa riga.
-
-2. PRODOTTI DUPLICATI: Unisci in UN SOLO oggetto SOLO se il prodotto ha ESATTAMENTE lo stesso nome E lo stesso prezzo unitario. Due righe con nomi simili ma prezzi diversi sono prodotti DISTINTI — non unire. Esempio: due righe "CONSILIA STRACC.165G 4% 1,89" identiche → un oggetto con quantity:2, unitPrice:1.89, totalPrice:3.78. Ma "CONSILIA STRACC.165G" e "CONSILIA GOCCE 250G" sono prodotti DIVERSI anche se entrambi "Consilia".
-
-3. TOTALE REALE: Il campo "totalAmount" deve essere il totale EFFETTIVAMENTE PAGATO, cioè il SUBTOTALE meno tutti gli sconti post-subtotale (es. "Sconto 10% AH", "SCONTO SOCI", "SCONTO X%"). Se lo scontrino mostra: SUBTOTALE 16,45 → Sconto 10% AH -1,65 → allora totalAmount = 14,80. NON usare il SUBTOTALE come totalAmount se ci sono sconti aggiuntivi dopo.
-   Il campo "totalDiscount" include la somma di TUTTI gli sconti (per articolo + globali). Se lo scontrino mostra una riga "RISPARMIATO", "HAI RISPARMIATO", "TOTALE SCONTO" o simile con un importo (es. "-1,19"), usa quel valore come "totalDiscount" (positivo: 1.19). È la fonte più affidabile del risparmio totale — usala quando presente.
-
-3b. NOME NEGOZIO: Leggi l'insegna/brand ESATTAMENTE come è stampato sullo scontrino (es. "IPER TRISCOUNT", "Conad", "Esselunga") — non inventare o correggere l'ortografia. Se è presente anche una ragione sociale generica (es. "SGM Supermercati Srl", "XYZ Srl", "ABC SpA"), combinale: "IPER TRISCOUNT - SGM Supermercati Srl". Se lo scontrino ha SOLO la ragione sociale senza un'insegna riconoscibile, usa solo quella. Priorità: insegna brand > ragione sociale.
-
-4. NOMI PRODOTTI — TRASCRIZIONE FEDELE: il "name" è quello che LEGGI stampato, lettera per lettera. NON è una traduzione né un'interpretazione.
-   - NON sostituire un marchio con uno più noto (FROSTA resta Frosta, mai Findus/Ringo; YOGA resta Yoga, mai Yoca; CONSILIA resta Consilia; LARIANO resta Lariano).
-   - NON tradurre, NON cambiare plurali/singolari, NON "correggere" parole già chiare (BANANE resta "Banane", non "Bananes"/"Banana").
-   - Espandi un'abbreviazione SOLO se è una troncatura ovvia e sicura (es. "PROSC." → "Prosciutto", "C.IGIENICA" → "Carta Igienica"). In tutti gli altri casi, se non sei sicuro, scrivi il testo COSÌ COM'È sullo scontrino: meglio un nome troncato ma vero che un nome inventato.
-   - Metti in "rawName" il testo grezzo esatto della riga, sempre.
-
-4b. SEZIONE GASTRONOMIA: Se lo scontrino ha una sezione marcata "GASTRONOMIA" con un prezzo separato (es. "GASTRONOMIA - 7,99 -"), questa è una categoria speciale: i prodotti elencati sotto sono venduti al banco gastronomia. Includi il prodotto con il prefisso "Gastronomia:" nel nome.
-   ATTENZIONE — possono esserci PIÙ sezioni "GASTRONOMIA - X,XX -" CONSECUTIVE, ognuna con il proprio header di prezzo e il proprio prodotto. Sono articoli DISTINTI: includili TUTTI, uno per ogni header. Esempio reale:
-     "GASTRONOMIA - 7,99 -" → "POLLO ARROSTO 7,99"      → item "Gastronomia: Pollo Arrosto" 7.99
-     "GASTRONOMIA - 2,99 -" → "PATATE ARROSTO 2,99"     → item "Gastronomia: Patate Arrosto" 2.99
-     "GASTRONOMIA - 2,79 -" → "CIPOLLINE BORETTANE 2,79"→ item "Gastronomia: Cipolline Borettane" 2.79
-   NON saltare quella in mezzo: ogni header "GASTRONOMIA - X,XX -" corrisponde a un prodotto da includere.
-   Esempi nomi gastronomia: POLLO ARR → "Gastronomia: Pollo Arrosto", PATATE ARR / PATTATE ARR / PAT.ARROSTO → "Gastronomia: Patate Arrosto" (NON "Pattate"), LASAGNE → "Gastronomia: Lasagne", ARISTA → "Gastronomia: Arista", CIPOLLINE BORETTANE → "Gastronomia: Cipolline Borettane".
-
-4c. ALTRI REPARTI (regola CRITICA): la stessa logica vale per QUALSIASI header di reparto con prezzo separato, es. "PANE - 2,09 -", "ORTOFRUTTA - X,XX -", "MACELLERIA - X,XX -", "SALUMERIA - X,XX -". L'header è il REPARTO, NON un prodotto: il prodotto VERO è la riga SOTTO l'header.
-   Esempio: "PANE - 2,09 -" seguito da "LARIANO ... 2,09" → l'item è "Lariano" 2.09 (NON "Pane"!). Non mettere MAI il nome del reparto da solo ("Pane", "Ortofrutta", "Gastronomia") come prodotto.
-
-5. COSA ESCLUDERE dagli items: righe IVA, punti fedeltà, resto, buoni pasto, subtotali ("SUBTOTALE"), "DI CUI IVA", "Pagamento elettronico", "Importo pagato", spese di servizio, "OFFERTA"/"OMAGGIO" senza un prezzo prodotto.
-   ⛔ ESCLUDI il NOME DELL'OPERATORE/CASSIERE: in alto, tra l'intestazione del negozio e il primo prodotto, c'è spesso un nome di persona con iniziale puntata (es. "DANIELE F.", "MARIO R.") o "OPERATORE"/"CASSA N."/"CASSIERE". NON è un prodotto: NON includerlo MAI (non ha un prezzo prodotto associato).
-   ⛔ ESCLUDI i nomi di REPARTO da soli ("PANE", "GASTRONOMIA", "ORTOFRUTTA", "MACELLERIA") — sono header, non prodotti (vedi regola 4c).
-   INCLUDI sempre shopper e sacchetti anche se costano poco (es. "SHOPPER MAT-BIO €0,12") — l'utente vuole vedere tutto quello che ha pagato.
-   NON escludere MAI prodotti alimentari o prodotti per la casa — includi assolutamente TUTTI i prodotti con un prezzo.
-
-5b. NESSUN PRODOTTO SALTATO: Conta le righe prodotto sullo scontrino e verifica che l'array "items" abbia lo stesso numero di elementi. Se una riga ha un prezzo valido e non è un subtotale/IVA, deve essere inclusa.
-
-5c. VERIFICA TOTALE — CONTROLLO FINALE: Dopo aver estratto tutti gli item, somma mentalmente i loro totalPrice (al netto degli sconti per articolo). Il risultato deve avvicinarsi al totalAmount dello scontrino (±0,10€ per arrotondamenti IVA). Se la somma si discosta di più, significa che hai letto male qualche prezzo — riesamina le righe con cifre ambigue (es. 8 vs 6, 0 vs 6, 1 vs 4) e correggile prima di rispondere.
-
-6. FOTO SFOCATA O PARZIALE: Se un valore non è leggibile usa null. Non inventare prezzi.
-
-7. DATA: Lo scontrino può mostrare la data in formato GG/MM/AAAA oppure GG/MM/AA — converti sempre in YYYY-MM-DD.
-
-Struttura JSON da restituire:
-{
-  "storeName": "nome negozio completo o null",
-  "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros, Pim, Iper, Iper Triscount, MD, Todis, Pewex, Bennet, Sigma, Gigante, Interspar, Crai, Selex, Dok, Emisfero, A&O, Maxì, Iperal, Iperstore, Basko, Galassia, Ekom, Acqua e Sapone, Caddy's, Pellicano, Fortè, Unes, U2 Supermercato, Iper La grande i, Carrefour Market, Carrefour Express, Carrefour Gourmet, Carrefour Bio, Conad City, Conad Superstore, Ipercoop, Coop Alleanza 3.0, Unicoop Firenze, Unicoop Tirreno, Nova Coop, Coop Lombardia, Coop Liguria, Supercoop, Crai Store, Crai Extra, Sidis, Coal, Agorà, Spar, Eurospar, Interspar, Despar Express, Aldi, Lidl, Penny Market, Prix, In's Mercato, Spazio Conad, Simply, Eté, Dpiù, Quì, Maxstore, Superstore, Auchan, Panorama, Iperpanorama, Ipercasalinghi, Risparmio Casa, Normal, Action, Primark Food, Bennet, Cattel, Gross Iper, Iper Montebello, Iper Tosano, Tosano, Galassia Ipermercato, Ok! Supermercato, Cedi, Ge.Al, Megamark, Finiper, Iper Finiper, Supermercati Tigre, Tigre, G.S. Supermercato, Gs, Superconti, Punto Simply, Pellegrini, Multicedi, Vitalia, Poli, Multicash, Metro, Makro, Costco, Globo, Emisfero, Gigante Verde, Superstore Auchan, Iperstanda, Standa, GS Carrefour, Billa, Rewe, Real, Migros, Cedi, Cedi Lombardo, Cedi Marche o null",
-  "storeAddress": "indirizzo completo o null",
-  "receiptDate": "YYYY-MM-DD o null",
-  "items": [
-    {
-      "name": "ESATTAMENTE come stampato (solo troncature ovvie espanse, mai marchi sostituiti)",
-      "rawName": "testo grezzo esatto della riga",
-      "barcode": "codice EAN se presente o null",
-      "quantity": 1,
-      "unitPrice": 0.00,
-      "totalPrice": 0.00,
-      "discount": 0.00,
-      "discountPercent": null,
-      "category": "una tra: frutta_verdura, carne_pesce, latticini, pane_pasta, bevande, dolci_snack, surgelati, dispensa, igiene_casa, altro"
-    }
-  ],
-  "totalAmount": 0.00,
-  "totalDiscount": 0.00,
-  "paymentMethod": "contanti/carta/buono pasto/misto o null"
-}`;
-
-// ─── OCR dedicato (OCR.space) → testo esatto → LLM struttura ──────────────────
-// Gli LLM vision "indovinano" sui nomi (Frosta→Findus). Un OCR vero legge i
-// caratteri ESATTI. Poi l'LLM struttura SOLO il testo (non l'immagine) → niente
-// allucinazioni. Chiave gratuita: registrala su https://ocr.space/ocrapi e
-// mettila in OCRSPACE_API_KEY (fallback 'helloworld' per i test).
-async function ocrSpaceText(imageBase64) {
-  const params = new URLSearchParams();
-  params.append('apikey', process.env.OCRSPACE_API_KEY || 'helloworld');
-  params.append('base64Image', imageBase64);   // data:image/...;base64,...
-  params.append('language', 'ita');
-  params.append('OCREngine', '2');               // engine 2 = migliore su scontrini
-  params.append('scale', 'true');
-  params.append('isTable', 'true');
-  const r = await axios.post('https://api.ocr.space/parse/image', params.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    timeout: 30000, maxContentLength: Infinity, maxBodyLength: Infinity,
-  });
-  if (r.data?.IsErroredOnProcessing) {
-    throw new Error('OCR.space: ' + JSON.stringify(r.data.ErrorMessage));
-  }
-  return (r.data?.ParsedResults || []).map(p => p.ParsedText || '').join('\n').trim();
-}
-
-// OCR self-hosted: POST l'immagine a un servizio OCR sulla tua VPS (Docker).
-// Funziona con server tipo "hertzg/tesseract-server" (multipart file+options) o
-// con un endpoint generico che ritorna { text } / { result } / { data.stdout }.
-// Config: OCR_PROVIDER=selfhosted  e  OCR_URL=http://127.0.0.1:8884/tesseract
-async function ocrSelfHostedText(imageBase64) {
-  const url = process.env.OCR_URL;
-  if (!url) throw new Error('OCR_URL non configurato');
-  const FormData = require('form-data');
-  const b64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-  const buf = Buffer.from(b64, 'base64');
-  const form = new FormData();
-  form.append('file', buf, { filename: 'receipt.jpg', contentType: 'image/jpeg' });
-  // 'options' è il formato di tesseract-server; gli OCR generici lo ignorano.
-  form.append('options', JSON.stringify({ languages: ['ita'] }));
-  const r = await axios.post(url, form, {
-    headers: form.getHeaders(),
-    timeout: 60000, maxContentLength: Infinity, maxBodyLength: Infinity,
-  });
-  const d = r.data || {};
-  const text = d?.data?.stdout || d?.text || d?.result
-    || d?.ParsedResults?.[0]?.ParsedText || (typeof d === 'string' ? d : '');
-  return String(text).trim();
-}
-
-// Divide uno scontrino MOLTO alto in 2 metà sovrapposte, così l'OCR legge anche
-// il fondo (su immagini lunghe l'OCR a volte perde l'ultima parte → totale e
-// risparmiato sbagliati). Richiede 'jimp' (puro JS): npm install jimp@0.22
-// Se jimp non c'è o l'immagine non è lunga, ritorna null (si legge tutta intera).
-async function splitTallImage(imageBase64) {
-  let Jimp;
-  try { Jimp = require('jimp'); } catch { return null; }
-  const b64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-  const img = await Jimp.read(Buffer.from(b64, 'base64'));
-  const w = img.bitmap.width, h = img.bitmap.height;
-  if (h < w * 1.8) return null;                 // non abbastanza lunga: niente split
-  const mid = Math.round(h / 2);
-  const ov  = Math.round(h * 0.06);             // 6% sovrapposizione al centro
-  const top = img.clone().crop(0, 0, w, mid + ov);
-  const bot = img.clone().crop(0, mid - ov, w, h - (mid - ov));
-  const enc = async im => 'data:image/jpeg;base64,' +
-    (await im.quality(82).getBufferAsync(Jimp.MIME_JPEG)).toString('base64');
-  return [await enc(top), await enc(bot)];
-}
-
-// Sceglie la fonte OCR (OCR_PROVIDER) e, per scontrini lunghi, legge in 2 metà.
-async function extractReceiptText(imageBase64) {
-  const provider = (process.env.OCR_PROVIDER || 'ocrspace').toLowerCase();
-  const ocrOne = img => ['selfhosted', 'tesseract', 'paddle', 'http'].includes(provider)
-    ? ocrSelfHostedText(img) : ocrSpaceText(img);
-
-  let halves = null;
-  try { halves = await splitTallImage(imageBase64); } catch (e) { console.warn('[receipt] split immagine fallito:', e.message); }
-  if (halves) {
-    console.info('[receipt] scontrino lungo → OCR in 2 metà');
-    const [t1, t2] = await Promise.all([ocrOne(halves[0]), ocrOne(halves[1])]);
-    return `${t1}\n=== PARTE 2 (continuazione: le righe SUBITO vicino a questo punto possono ripetersi per la sovrapposizione) ===\n${t2}`.trim();
-  }
-  return ocrOne(imageBase64);
-}
-
-// Prompt che STRUTTURA il testo OCR (già accurato) — non legge immagini.
-const STRUCTURE_PROMPT = `Ti do il TESTO GREZZO di uno scontrino italiano, già letto da OCR. Il tuo compito è SOLO STRUTTURARLO in JSON. Restituisci SOLO JSON valido.
-
-REGOLE:
-
-1. FEDELTÀ NOMI: copia "name" ESATTAMENTE come appare nel testo (espandi solo troncature ovvie: "PROSC."→"Prosciutto"). MAI inventare o sostituire marchi (Frosta resta Frosta, Yoga resta Yoga, Lariano resta Lariano).
-
-2. COLONNE SCONTRINO: ogni prodotto ha 3 colonne: DESCRIZIONE | IVA% | PREZZO.
-   Il PREZZO è l'ultimo numero sulla riga che NON è seguito da "%". Le aliquote IVA (4%, 10%, 22%) NON sono prezzi.
-   ATTENZIONE storpiature OCR nelle aliquote IVA: "72,00%" → leggi come 22,00%; "10:00%" → 10,00%; "4.00%" → 4,00%. Se vedi un numero seguito da % che assomiglia a un'aliquota IVA italiana (4, 10, 22), è l'IVA — non il prezzo.
-
-3. DUE PRODOTTI SU UNA RIGA: se l'OCR ha fuso due nomi di prodotto sulla stessa riga con UN SOLO prezzo (es. "KINDER ICE CRE   FROSTA FISHBURGER   10,00%  3,79"), sono DUE prodotti distinti:
-   - Il prezzo visibile sulla riga (3,79) appartiene al PRIMO prodotto (KINDER).
-   - Se la riga IMMEDIATAMENTE SUCCESSIVA è solo un numero (es. "3,49" senza nome), quello è il prezzo del SECONDO prodotto (FROSTA).
-   - Se non c'è un prezzo standalone dopo, il secondo prodotto ha prezzo null e va OMESSO (meglio perderlo che metterlo a 0).
-   Includi sempre il PRIMO prodotto con il suo prezzo. Includi il SECONDO solo se hai trovato il suo prezzo standalone.
-
-4. PREZZO TRONCATO: se un prezzo inizia con virgola (es. ",99" o ",49"), l'OCR ha perso la prima cifra. Ricostruisci: se il totale e il contesto suggeriscono un valore tipo 1,99 → scrivi 1.99; se potrebbe essere 0,99 → 0.99. Usa il contesto del totale per scegliere la cifra più probabile.
-
-5. SCONTI: riga con prezzo NEGATIVO o che inizia con "SCONTO"/"VOLANTINO"/"PROMO"/"TAGLIO PREZZO" → è sconto del prodotto PRECEDENTE, mettilo nel suo "discount" (valore positivo). NON è un item separato.
-   "VOLANTINO XX": il numero è il codice offerta, NON l'importo. L'importo è il numero negativo sulla stessa riga.
-
-6. QUANTITÀ: riga separata tipo "2 X 1,74" prima di un prodotto → quantity=2, unitPrice=1,74, totalPrice=3,48. Ma "X 10" o "X 6" DENTRO un nome (es. "NESCAFE X 10") è la descrizione del prodotto — quantity=1.
-
-7. REPARTI: header tipo "PANE - 2,09 -" o "GASTRONOMIA - 11,42 -" NON sono prodotti: il prodotto è la riga SOTTO. Es. "PANE - 2,09 -" + "LARIANO 4,00% 2,09" → item "Lariano" 2.09 (category: pane_pasta). Gastronomia: prefisso "Gastronomia: " nel nome.
-
-8. ESCLUDI: operatore/cassiere (es. "DANIELE F.", "MARIO R."), numero documento, "SUBTOTALE", "TOTALE COMPLESSIVO", "DI CUI IVA", "Pagamento", "Importo pagato", righe con solo IVA%, header colonne ("DESCRIZIONE IVA Prezzo").
-
-9. TOTALI: "totalAmount" = numero accanto a "TOTALE COMPLESSIVO". "totalDiscount" = somma di tutti gli sconti (articolo + globali tipo "SCONTO 10%").
-   MARCATORE "=== PARTE 2 ===": separa due metà della stessa foto — intorno al marcatore includi ogni prodotto UNA sola volta. Altrove i duplicati sono VERI (es. due righe "GRANAROLO STRACCHINO 2,19" = 2 prodotti distinti).
-
-10. Includi TUTTI i prodotti con prezzo (anche buste/sacchetti). Non saltarne nessuno.
-
-11. CATEGORIA per ogni prodotto — scegli ESATTAMENTE una di queste 10:
-    frutta_verdura (Banane/Rucola/Cetrioli/Albicocche/Pomodoro/Meloni/Pesche/Mele)
-    carne_pesce (Prosciutto/Mortadella/Bacon/Saltimbocca/Speck/Pollo/Tonno/Salmone)
-    latticini (Parmalat/Yogurt/Kefir/Stracchino/Edamer/Uova/Müller/Granarolo/Mozzarella)
-    pane_pasta (Lariano/Pane/Crostata/Torretta/Pasta/Riso/Crackers)
-    bevande (Yoga/Acqua/Nescafe/The/San Benedetto/Succo/Birra/Vino/Coca)
-    dolci_snack (Kinder/Biscotti/Cioccolato/Snack/Barrette/Caramelle)
-    surgelati (Frosta/Findus/surgelati/gelato/pizza surgelata)
-    dispensa (Olio/Sale/Zucchero/Conserve/Farina/Brodo/Pomodoro in scatola)
-    igiene_casa (Detersivo/Carta igienica/Shampoo/Sapone/Dentifricio/Ammorbidente)
-    altro (tutto il resto)
-
-12. Se un dato manca usa null.
-
-Struttura JSON: {"storeName":"…","storeChain":"… o null","storeAddress":"… o null","receiptDate":"YYYY-MM-DD o null","items":[{"name":"…","rawName":"riga grezza","quantity":1,"unitPrice":0.00,"totalPrice":0.00,"discount":0.00,"category":"una delle 10"}],"totalAmount":0.00,"totalDiscount":0.00,"paymentMethod":"… o null"}`;
-
-// PaddleOCR separa le 3 colonne dello scontrino su righe distinte:
-//   NOME PRODOTTO      ← riga 1
-//   22,00%             ← riga 2 (aliquota IVA — può usare . o , come decimale)
-//   3,79               ← riga 3 (prezzo)
-// Questo pre-processore riunisce le 3 righe in 1 riga sola così l'LLM
-// non confonde l'aliquota con il prezzo.
-function reassembleReceiptLines(text) {
-  // Riconosce righe tipo "22,00%" o "4.00%" o "10,00%" (solo aliquote IVA italiane)
-  const ivaRe = /^\d{1,2}[.,]\d{2}%$/;
-  // Riconosce un prezzo (positivo o negativo): "3,79" "-1,50" "71,81"
-  const priceRe = /^-?\d+[.,]\d{2}$/;
-  const lines = text.split('\n').map(l => l.trim());
-  const out = [];
-  let i = 0;
-  while (i < lines.length) {
-    const cur = lines[i];
-    const next = lines[i + 1] || '';
-    const after = lines[i + 2] || '';
-    // Pattern: NOME / IVA% / PREZZO → unisci in una riga sola
-    if (cur && ivaRe.test(next) && priceRe.test(after)) {
-      out.push(`${cur} ${next} ${after}`);
-      i += 3;
-    } else {
-      if (cur) out.push(cur);
-      i++;
-    }
-  }
-  return out.join('\n');
-}
-
-// Pipeline completa: OCR testo → struttura con LLM. Ritorna il JSON parsato, o
-// null se il provider è "vision" oppure OCR non disponibile (usa il vision OCR).
-async function tryOcrSpacePipeline(imageBase64) {
-  // OCR_PROVIDER=vision → bypassa il text OCR e usa direttamente la vision
-  if ((process.env.OCR_PROVIDER || '').toLowerCase() === 'vision') {
-    console.info('[receipt] OCR_PROVIDER=vision → vision OCR diretto');
-    return null;
-  }
-  let text;
-  try {
-    text = await extractReceiptText(imageBase64);
-  } catch (e) {
-    console.warn('[receipt] OCR (testo) non disponibile:', e.message);
-    return null;
-  }
-  if (!text || text.replace(/\s/g, '').length < 40) {
-    console.warn('[receipt] OCR testo troppo corto → fallback vision');
-    return null;
-  }
-  // Qualità check: se >40% delle righe non-vuote mancano di un prezzo leggibile
-  // (OCR ha letto nome+IVA ma non il prezzo), il testo è troppo frammentato.
-  // In quel caso fallback alla vision che legge la colonna prezzi direttamente.
-  const nonEmpty = text.split('\n').filter(l => l.trim().length > 3);
-  const withPrice = nonEmpty.filter(l => /\d+[.,]\d{2}/.test(l));
-  if (nonEmpty.length > 5 && withPrice.length / nonEmpty.length < 0.35) {
-    console.warn(`[receipt] OCR testo frammentato (${withPrice.length}/${nonEmpty.length} righe con prezzo) → vision`);
-    return null;
-  }
-  // Riassembla le 3 colonne su riga singola (PaddleOCR le separa)
-  const rawLen = text.length;
-  text = reassembleReceiptLines(text);
-  console.info(`[receipt] OCR OK (${rawLen} char → ${text.length} dopo riassemblaggio) → vision+OCR ibrido`);
-
-  // Strategia ibrida: manda TESTO OCR + IMMAGINE al modello vision.
-  // Il testo OCR ha i nomi esatti (niente allucinazioni di marchi).
-  // L'immagine serve per leggere i prezzi che l'OCR ha perso o storpiato.
-  // Il modello usa il testo come "ancora" per i nomi e l'immagine per i prezzi.
-  const hybridPrompt = `${RECEIPT_PROMPT}
-
-ATTENZIONE — MODALITÀ IBRIDA: Ti fornisco sia l'IMMAGINE che il TESTO OCR già estratto.
-Il testo OCR ha i nomi prodotto ESATTI (fidati di esso per i nomi, NON inventare).
-L'immagine ha i prezzi nella colonna destra — usala per leggere i prezzi corretti.
-Regola: per ogni prodotto, il NOME viene dal testo OCR, il PREZZO viene dall'immagine.
-
-TESTO OCR (nomi esatti, prezzi potrebbero essere incompleti):
-"""
-${text}
-"""`;
-
-  const mimeType = imageBase64.includes('data:') ? imageBase64.split(';')[0].split(':')[1] : 'image/jpeg';
-  const b64data  = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-  const messages = [{
-    role: 'user',
-    content: [
-      { type: 'text',       text: hybridPrompt },
-      { type: 'image_url',  image_url: { url: `data:${mimeType};base64,${b64data}` } },
-    ],
-  }];
-
-  try {
-    let resp;
-    try {
-      resp = await callOcrApi(OCR_MODEL_ACCURATE, messages);
-    } catch {
-      resp = await callOcrApi(OCR_MODEL_FALLBACK, messages);
-    }
-    return parseOcrJson(resp.choices[0].message.content);
-  } catch (e) {
-    console.warn('[receipt] pipeline ibrida fallita → fallback vision puro:', e.message);
-    return null;
-  }
-}
+const RECEIPT_SCAN_POINTS = 50;
 
 // ─── POST /api/receipts/scan ───────────────────────────────────────────────────
 async function scanReceipt(req, res) {
@@ -435,9 +44,9 @@ async function scanReceipt(req, res) {
     return error(res, `Formato immagine non supportato: ${req.file.mimetype}. Usa JPEG, PNG o WEBP.`);
   }
 
-  // 1. Converti immagine in base64 (no S3 richiesto per testing)
+  // 1. Converti immagine in base64 (no S3 richiesto)
   const imageBase64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-  const imageUrl = null; // nessun storage esterno
+  const imageUrl = null;
 
   // 2. Crea record "processing" per feedback immediato all'utente
   let receipt;
@@ -450,89 +59,10 @@ async function scanReceipt(req, res) {
     return error(res, 'Errore database', 500);
   }
 
-  // 3. OCR con gpt-4o-mini → fallback gpt-4o
-  //    Strategia: usa il modello accurato (Gemini 2.5 Pro su OpenRouter).
-  //    Se la somma non torna o il JSON è malformato, secondo parere con gpt-4o.
-  //    Se è disponibile un fine-tuned model, usa direttamente quello.
+  // 3. OCR (pipeline completa nel service: ibrida → vision con doppio modello)
   let parsed;
   try {
-    // ── PASSO 1: OCR dedicato (OCR.space) legge il testo ESATTO → LLM struttura.
-    //    È il metodo affidabile: l'LLM non vede l'immagine, quindi non inventa nomi.
-    parsed = await tryOcrSpacePipeline(imageBase64);
-
-    // ── PASSO 2: se OCR.space non è disponibile, fallback al vision OCR (come prima).
-    if (!parsed) {
-    const fineTunedModel = await getOcrModel(); // null = nessun fine-tuned disponibile
-    const messages = [{
-      role: 'user',
-      content: [
-        { type: 'text',      text: RECEIPT_PROMPT },
-        { type: 'image_url', image_url: { url: imageBase64, detail: 'high' } },
-      ],
-    }];
-
-    // Tentativo 1: fine-tuned (se disponibile) oppure gpt-4o (accurato).
-    // Prima si usava gpt-4o-mini per risparmiare, ma su scontrini reali (foto
-    // storte, 60+ righe) sbagliava troppo: nomi alterati e prezzi errati.
-    // L'accuratezza dell'estrazione È il valore dell'app → vale i ~$0.003/scontrino.
-    let firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
-    // Resilienza: se il modello primario dà errore API (modello non disponibile,
-    // response_format non supportato, rate limit…) ricade su gpt-4o, già provato.
-    let response;
-    try {
-      response = await callOcrApi(firstModel, messages);
-    } catch (primaryErr) {
-      if (firstModel === OCR_MODEL_FALLBACK) throw primaryErr; // già su gpt-4o: rilancia
-      console.warn(`[receipt] modello primario ${firstModel} fallito (${primaryErr.message}) → fallback ${OCR_MODEL_FALLBACK}`);
-      firstModel = OCR_MODEL_FALLBACK;
-      response = await callOcrApi(OCR_MODEL_FALLBACK, messages);
-    }
-    const rawContent = response.choices[0].message.content;
-
-    let parsedFirst;
-    try {
-      parsedFirst = parseOcrJson(rawContent);
-      console.info(`[receipt] OCR ok con modello ${firstModel}`);
-    } catch {
-      parsedFirst = null;
-    }
-
-    // Validazione somma item vs totalAmount: se discrepanza >5% o JSON malformato → fallback modello diverso.
-    // Confronta la somma NETTA (totalPrice - sconto per riga) col totale netto:
-    // prima confrontava il lordo col netto → falsi fallback sugli scontrini scontati
-    // e mascherava gli item davvero saltati.
-    const needsFallback = !parsedFirst || (() => {
-      const items = Array.isArray(parsedFirst.items) ? parsedFirst.items : [];
-      const sumItems = items.reduce((acc, i) =>
-        acc + (parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0), 0);
-      const total = parseFloat(parsedFirst.totalAmount) || 0;
-      if (total <= 0 || items.length === 0) return false;
-      const diff = Math.abs(sumItems - total) / total;
-      if (diff > 0.05) {
-        console.warn(`[receipt] somma netta item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}% → fallback ${OCR_MODEL_FALLBACK}`);
-        return true;
-      }
-      return false;
-    })();
-
-    if (needsFallback) {
-      console.warn(`[receipt] fallback a ${OCR_MODEL_FALLBACK}`);
-      const fallbackRes = await callOcrApi(OCR_MODEL_FALLBACK, [
-        ...messages,
-        ...(parsedFirst ? [
-          { role: 'assistant', content: rawContent },
-          { role: 'user', content: 'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.' },
-        ] : [
-          { role: 'assistant', content: rawContent },
-          { role: 'user', content: 'Il JSON precedente è malformato. Restituisci SOLO il JSON corretto senza markdown, backtick o testo extra.' },
-        ]),
-      ]);
-      parsed = parseOcrJson(fallbackRes.choices[0].message.content);
-      console.info(`[receipt] OCR ok con fallback ${OCR_MODEL_FALLBACK}`);
-    } else {
-      parsed = parsedFirst;
-    }
-    } // fine fallback vision OCR (if !parsed)
+    parsed = await runReceiptOcr(imageBase64);
   } catch (ocrErr) {
     console.error('[receipt] OCR error:', ocrErr.message);
     await prisma.receipt.update({
@@ -543,41 +73,30 @@ async function scanReceipt(req, res) {
   }
 
   // 3b. SANITIZE: l'OCR a volte restituisce la stringa "null"/"N/A" o date non valide.
-  //     Senza questa pulizia il salvataggio crasha (es. new Date("Invalid Date")).
   parsed.storeName     = cleanStr(parsed.storeName);
   parsed.storeChain    = cleanStr(parsed.storeChain);
   parsed.storeAddress  = cleanStr(parsed.storeAddress);
   parsed.paymentMethod = cleanStr(parsed.paymentMethod);
   parsed.receiptDate   = cleanDate(parsed.receiptDate);
 
-  // 3c. SANITIZE ITEMS: il modello a volte produce FINTE righe "sconto" come se
-  //     fossero prodotti (es. "Sconto Soci", "Taglio Prezzo", "Volantino" con prezzo 0)
-  //     — a volte rigurgita persino gli esempi dal prompt. Gli sconti veri sono già
-  //     nel campo discount dei prodotti reali: queste pseudo-righe vanno rimosse.
+  // 3c. SANITIZE ITEMS: rimuovi pseudo-righe "sconto" e ghost row a prezzo 0.
   const DISCOUNT_LABEL = /^\s*(scont|taglio?\s*prezz|articolo\s*prezzo\s*fisso|volantin|promo\b|offert|riduzion|buono\s*sconto)/i;
   const items = (Array.isArray(parsed.items) ? parsed.items : []).filter(it => {
     const name = (it?.name || it?.rawName || '').trim();
-    if (!name) return false;                         // niente nome → scarta
+    if (!name) return false;
     const price = parseFloat(it?.totalPrice);
-    // È una riga-sconto se il nome è un'etichetta di sconto E non ha un prezzo
-    // prodotto valido (>0). I prodotti veri hanno sempre un prezzo positivo.
     if (DISCOUNT_LABEL.test(name) && (!Number.isFinite(price) || price <= 0)) return false;
-    // OCR a volte fonde due prodotti su una riga → il primo finisce con prezzo 0/null.
-    // Un prodotto a €0 non esiste sugli scontrini: rimuoviamo queste ghost row.
     if (!Number.isFinite(price) || price <= 0) return false;
     return true;
   });
   parsed.items = items;
 
-  // 3d. RISPARMIATO: garantisci che totalDiscount sia ALMENO la somma degli sconti
-  //     per riga (l'LLM a volte lo sottostima). Se l'LLM ha un valore più alto
-  //     (perché ha letto anche lo sconto finale tipo "SCONTO 10%"), tieni il suo.
+  // 3d. RISPARMIATO: totalDiscount almeno pari alla somma degli sconti per riga.
   const itemDiscSum = items.reduce((a, i) => a + (parseFloat(i.discount) || 0), 0);
   const llmDisc = parseFloat(parsed.totalDiscount) || 0;
   parsed.totalDiscount = Math.round(Math.max(llmDisc, itemDiscSum) * 100) / 100;
 
-  // 4. Controllo duplicato: stessa data + stesso negozio + stesso totale + stesso n° prodotti
-  //    Se esiste già uno scontrino identico, aggiorna i dati ma NON aggiungere punti.
+  // 4. Controllo duplicato: stessa data + negozio + totale + n° prodotti
   let isDuplicate = false;
 
   if (parsed.receiptDate && (parsed.storeChain || parsed.storeName) && parsed.totalAmount) {
@@ -588,7 +107,7 @@ async function scanReceipt(req, res) {
     const existing = await prisma.receipt.findFirst({
       where: {
         userId: req.userId,
-        id:     { not: receipt.id },   // non sé stesso
+        id:     { not: receipt.id },
         receiptDate: { gte: dateFrom, lt: dateTo },
         totalAmount: parseFloat(parsed.totalAmount),
         ...(parsed.storeChain ? { storeChain: parsed.storeChain } : { storeName: parsed.storeName }),
@@ -600,9 +119,8 @@ async function scanReceipt(req, res) {
     if (existing && existing._count.items === items.length) {
       isDuplicate = true;
       console.info(`[receipt] duplicato rilevato (id=${existing.id}) — aggiorno dati, nessun punto aggiunto`);
-      // Elimina il record "processing" appena creato, useremo quello esistente
       await prisma.receipt.delete({ where: { id: receipt.id } }).catch(() => {});
-      receipt = existing; // punta al record esistente per il resto del flusso
+      receipt = existing;
     }
   }
 
@@ -611,7 +129,7 @@ async function scanReceipt(req, res) {
   try {
     updated = await prisma.$transaction(async tx => {
       // 4a. Aggiorna Receipt con i dati estratti
-      const r = await tx.receipt.update({
+      await tx.receipt.update({
         where: { id: receipt.id },
         data: {
           storeName:     parsed.storeName    ?? null,
@@ -628,8 +146,6 @@ async function scanReceipt(req, res) {
       // 4b. createMany per gli item — 1 query invece di N
       if (items.length > 0) {
         await tx.receiptItem.createMany({
-          // Clamp dei valori numerici: un OCR sballato può restituire quantità
-          // o prezzi assurdi (es. 999999) — li limitiamo a intervalli plausibili.
           data: items.map(item => ({
             receiptId:       receipt.id,
             name:            item.name     || item.rawName || 'Prodotto sconosciuto',
@@ -660,11 +176,8 @@ async function scanReceipt(req, res) {
     return error(res, 'Errore salvataggio dati scontrino', 500);
   }
 
-  // 5. PriceHistory per forecasting B2B — fuori dalla transaction principale
-  //    GDPR opt-in: inseriamo i prezzi nel pool B2B SOLO se l'utente ha dato il consenso
-  //    (b2bDataSharing === true, default). L'utente può disattivarlo nelle Impostazioni.
+  // 5. PriceHistory per forecasting B2B — GDPR opt-in (b2bDataSharing)
   if (parsed.storeChain && items.length > 0) {
-    // Leggi preferenza opt-in dell'utente (select solo il campo necessario)
     const userPrefs = await prisma.user.findUnique({
       where:  { id: req.userId },
       select: { b2bDataSharing: true },
@@ -693,15 +206,13 @@ async function scanReceipt(req, res) {
     }
   }
 
-  // 6. Popola dispensa automaticamente dagli item dello scontrino (fire-and-forget)
-  // Passa sempre receiptId: la funzione dedup per (userId,name) e per sourceReceiptId
-  // così riscansi lo stesso scontrino → aggiunge solo item mancanti, non raddoppia quantità
+  // 6. Popola dispensa (fire-and-forget) — dedup per sourceReceiptId nel service
   if (items.length > 0) {
     populatePantryFromReceipt(req.userId, items, receipt.id)
       .catch(e => console.warn('[receipt] pantry sync error:', e.message));
   }
 
-  // 7. Assegna punti gamification — solo se NON è un duplicato
+  // 7. Punti gamification — solo se NON è un duplicato
   if (!isDuplicate) {
     awardPoints(req.userId, RECEIPT_SCAN_POINTS, 'receipt_scan', receipt.id)
       .catch(e => console.warn('[receipt] awardPoints error:', e.message));
@@ -714,8 +225,6 @@ async function scanReceipt(req, res) {
     ...(isDuplicate ? { message: 'Scontrino già presente: dati aggiornati, nessun punto aggiunto.' } : {}),
   }, 201);
 }
-
-const RECEIPT_SCAN_POINTS = 50;
 
 // ─── GET /api/receipts ────────────────────────────────────────────────────────
 async function getReceipts(req, res) {
@@ -750,27 +259,20 @@ async function getReceiptStats(req, res) {
 
   // Aggregazioni DB-side — niente caricamento in memoria di tutti i record
   const [agg, byChainRaw, topItemsRaw] = await Promise.all([
-    // Totale speso + risparmiato + conteggio
     prisma.receipt.aggregate({
       where:  baseWhere,
       _sum:   { totalAmount: true, totalDiscount: true },
       _count: { id: true },
     }),
-
-    // Spesa per catena (groupBy)
     prisma.receipt.groupBy({
       by:     ['storeChain'],
       where:  baseWhere,
       _sum:   { totalAmount: true },
       _count: { id: true },
     }),
-
-    // Top prodotti per frequenza (aggregazione DB)
     prisma.receiptItem.groupBy({
       by:     ['name'],
-      where:  {
-        receipt: baseWhere,
-      },
+      where:  { receipt: baseWhere },
       _sum:   { totalPrice: true, quantity: true },
       _count: { id: true },
       orderBy: { _count: { id: 'desc' } },
@@ -821,199 +323,6 @@ async function deleteReceipt(req, res) {
   // onDelete: Cascade elimina anche i ReceiptItem associati
   await prisma.receipt.delete({ where: { id: req.params.id } });
   return success(res, { message: 'Scontrino eliminato' });
-}
-
-// ─── Helper ───────────────────────────────────────────────────────────────────
-
-/**
- * Popola la dispensa con i prodotti estratti dallo scontrino.
- *
- * Versione batch (prima: 2 query per prodotto in loop → su uno scontrino da
- * 30 prodotti erano 60 query). Ora:
- *   1 findMany per leggere la dispensa esistente
- *   1 createMany per i prodotti nuovi
- *   N update (solo per i prodotti già presenti) dentro un'unica transaction
- *
- * Dedup case-insensitive sia tra gli item dello scontrino sia con la dispensa.
- */
-// ─── Articoli da NON mettere in dispensa (non sono cibo/scorte) ────────────────
-function isNonPantryItem(name) {
-  const n = name.toLowerCase();
-  const blacklist = [
-    'busta', 'buste', 'shopper', 'sacchetto', 'sacchetti', 'sacco', 'sacchi',
-    'ecologic', 'bio sacc', 'borsa', 'borse', 'shoppers',
-    'sporta', 'cassa', 'spesa di servizio', 'servizio',
-  ];
-  return blacklist.some(w => n.includes(w));
-}
-
-// Categorie valide per la dispensa (devono combaciare col frontend pantryScanner)
-const VALID_CATEGORIES = new Set([
-  'frutta_verdura', 'carne_pesce', 'latticini', 'pane_pasta', 'bevande',
-  'dolci_snack', 'surgelati', 'dispensa', 'igiene_casa', 'altro',
-]);
-
-// ─── Categoria automatica per la dispensa (niente più "altro" a tappeto) ───────
-// Usa STEM (radici) e non parole intere: "banan" copre banana/banane, "albicocc"
-// copre albicocca/albicocche, ecc. Così plurali e nomi alterati dall'OCR matchano.
-// L'ORDINE conta: le categorie con possibili collisioni (bevande, latticini, carne)
-// sono prima di frutta_verdura per evitare es. "aranciata"→frutta o "uova"→altro.
-// (Usato come fallback quando l'LLM non fornisce una categoria valida.)
-function inferCategory(name) {
-  const n = name.toLowerCase();
-  const map = [
-    ['bevande', ['acqua','vitasn','frizzant','succo','aranciat','limonat','coca-cola','coca cola',' cola',
-      'pepsi','birra','vino','spumante','prosecco','tè ',' the ','thè','nescafe','caffe',
-      'caffè','ginseng','bibita','energy','gatorade','redbull','gassosa','spremuta',
-      'estathe','san benedetto','s.benedetto']],
-    ['latticini', ['latte','parmalat','formagg','stracchin','mozzarell','bocconcin','yogurt',
-      'yoga ','kefir','muller','müller','burro','panna','ricotta','grana','parmigian',
-      'philadelphia','gorgonzola','mascarpone','provol','edamer','emment','fontina',
-      'scamorz','uova','uovo']],
-    ['carne_pesce', ['pollo','manzo','bovino','maiale','salsicc','hamburg','burger','wurstel',
-      'prosciutt','salame','speck','bacon','citterio','mortadella','bresaola','saltimbocca',
-      'tonno','salmone','merluzzo','pesce','gamber','filetto','arista','tacchino','fettine',
-      'macinato','cotoletta','nugget']],
-    ['frutta_verdura', ['mela','mele','banan','pomodor','datter','insalat','patata','patate',
-      'cipoll','carota','carote','zucchin','zucca','melanzan','pesca','pesche','nettarin',
-      'albicocc','ciliegi','susin','prugn','fragol','mirtill','lampon','uva','kiwi','ananas',
-      'melon','angur','arance','arancia tar','limone','limoni','mandarin','clementin',
-      'frutta','verdura','spinaci','funghi','champignon','lattuga','finocchi','peperon',
-      'broccoli','sedano','rucol','cetriol','rape','bietol','radicchio','cavol','noci',
-      'nocciole','mandorle']],
-    ['pane_pasta', ['pane','pasta','spaghet','penne','fusill','rigaton','riso','farina','pizza',
-      'piadina','pancarre','pancarré','panini','baguette','schiacciat','cracker','grissini',
-      'cereali','fette biscottat','lariano','crostat']],
-    ['dolci_snack', ['biscott','cioccolat','kinder','merendin','snack','caramell','gelato',
-      'torta','nutella','pan di stelle','pandistelle','wafer','barrett','patatine','brioche',
-      'cornett','ghiacciol']],
-    ['surgelati', ['surgelat','freezer','bastoncini','minestrone surgelato','findus','frosta']],
-    ['dispensa', ['olio','aceto','sale','zucchero','passata','pelati','legumi','fagioli',
-      'lenticchie','ceci','conserve','sugo','maizena','spezie','dado','cannamela','origano',
-      'miele','marmellat','confettura','crema spalmabile']],
-    ['igiene_casa', ['carta igienica','c.igienica','detersivo','sapone','shampoo','dentifricio',
-      'carta cucina','foxy','scottex','ammorbidente','candeggina','spugn','sgrassatore','det.']],
-  ];
-  for (const [cat, words] of map) {
-    if (words.some(w => n.includes(w))) return cat;
-  }
-  return 'altro';
-}
-
-async function populatePantryFromReceipt(userId, items, receiptId) {
-  // 1. Aggrega gli item dello scontrino per nome normalizzato (lowercase)
-  const byKey = new Map();
-  for (const item of items) {
-    const name = (item.name || item.rawName || '').trim();
-    if (!name) continue;
-    if (isNonPantryItem(name)) continue;
-    const key = name.toLowerCase();
-    const qty = clampQuantity(item.quantity);
-    if (byKey.has(key)) {
-      byKey.get(key).quantity += qty;
-    } else {
-      byKey.set(key, { name, quantity: qty, barcode: item.barcode ?? null, category: item.category ?? null });
-    }
-  }
-  if (byKey.size === 0) return;
-
-  // 2. Leggi dispensa esistente + quali item vengono già da questo scontrino
-  const existing = await prisma.pantryItem.findMany({
-    where:  { userId },
-    select: { id: true, name: true, quantity: true, sourceReceiptId: true },
-  });
-  const existingByKey = new Map(existing.map(e => [e.name.trim().toLowerCase(), e]));
-
-  const toCreate = [];
-  const updates  = [];
-  const now      = new Date();
-
-  for (const [key, data] of byKey) {
-    const match = existingByKey.get(key);
-
-    if (match) {
-      // Item già in dispensa: aggiorna solo se NON viene già da questo stesso scontrino
-      // (evita raddoppio quantità su rescan). Se viene da altro scontrino/manuale → lascia stare.
-      if (match.sourceReceiptId === receiptId) continue; // già aggiunto da questa scansione
-      // Item esiste ma da altra fonte: aggiorna sourceReceiptId (ora "appartiene" a questo scan)
-      // ma NON sommare la quantità — l'utente ce l'ha già in dispensa
-      updates.push(
-        prisma.pantryItem.update({
-          where: { id: match.id },
-          data:  { sourceReceiptId: receiptId, inStock: true, updatedAt: now },
-        }),
-      );
-    } else {
-      // Item non ancora in dispensa → aggiungilo
-      toCreate.push({
-        userId,
-        name:           data.name,
-        category:       VALID_CATEGORIES.has(data.category) ? data.category : inferCategory(data.name),
-        quantity:       data.quantity,
-        unit:           'pz',
-        barcode:        data.barcode,
-        inStock:        true,
-        source:         'receipt',
-        sourceReceiptId: receiptId ?? null,
-      });
-    }
-  }
-
-  const ops = [];
-  if (toCreate.length > 0) {
-    ops.push(prisma.pantryItem.createMany({ data: toCreate, skipDuplicates: true }));
-  }
-  ops.push(...updates);
-  if (ops.length > 0) await prisma.$transaction(ops);
-}
-
-// ─── Pulizia stringhe/date dall'OCR (difesa da "null"/"N/A"/date invalide) ─────
-function cleanStr(v) {
-  if (v == null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const low = s.toLowerCase();
-  if (low === 'null' || low === 'undefined' || low === 'n/a' || low === 'na' || low === '-') return null;
-  return s;
-}
-function cleanDate(v) {
-  const s = cleanStr(v);
-  if (!s) return null;
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return null;       // data non valida → null, niente crash
-  // scarta date assurde (prima del 2000 o oltre 1 anno nel futuro)
-  const year = d.getFullYear();
-  if (year < 2000 || year > new Date().getFullYear() + 1) return null;
-  return d;
-}
-
-// ─── Clamp valori numerici (difesa da OCR sballato) ────────────────────────────
-function clampQuantity(v) {
-  const n = parseFloat(v);
-  if (!Number.isFinite(n) || n <= 0) return 1;
-  return Math.min(n, 1000);          // max 1000 pezzi per riga
-}
-function clampPrice(v) {
-  const n = parseFloat(v);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.min(n, 100000);        // max 100.000 € per riga
-}
-function clampPercent(v) {
-  const n = parseFloat(v);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.min(n, 100);           // 0–100 %
-}
-
-/**
- * Normalizza il nome di un prodotto in una chiave stabile per PriceHistory.
- * Es: "Pasta Barilla 500g" → "pasta_barilla_500g"
- */
-function normalizeProductKey(name) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9àèéìòù\s]/g, '')
-    .replace(/\s+/g, '_')
-    .slice(0, 80);
 }
 
 // ─── POST /api/receipts/export/excel (solo Premium) ──────────────────────────

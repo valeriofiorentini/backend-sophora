@@ -1,69 +1,7 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { uploadToS3 } = require('../config/s3');
-const { sendMulticast } = require('../services/push.service');
-const { haversineKm, bboxWhere } = require('../services/geo.service');
-const OpenAI = require('openai');
-
-const openai = new OpenAI({
-  apiKey:  process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined,
-});
-const MODEL = process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o';
-
-// Estrae storeName e offerExpiresAt dalla foto del post (fire-and-forget)
-async function extractDiscountMeta(imageUrl) {
-  try {
-    const resp = await openai.chat.completions.create({
-      model: MODEL,
-      max_tokens: 300,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Guarda questa foto di uno sconto/offerta. Rispondi SOLO con JSON: {"storeName": "nome negozio o null", "offerExpiresAt": "YYYY-MM-DD o null", "productName": "prodotto principale o null"}' },
-          { type: 'image_url', image_url: { url: imageUrl } },
-        ],
-      }],
-    });
-    const raw = resp.choices[0]?.message?.content || '{}';
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-// Notifica utenti entro radiusKm dal punto della segnalazione
-async function notifyNearbyUsers(posterId, lat, lon, storeName, productName, expiresAt, feedId, radiusKm = 15) {
-  const users = await prisma.user.findMany({
-    where: {
-      id:       { not: posterId },
-      fcmToken: { not: null },
-      // bounding box: carica solo gli utenti nel riquadro, non tutta la tabella
-      ...bboxWhere(lat, lon, radiusKm),
-    },
-    select: { id: true, fcmToken: true, latitude: true, longitude: true },
-  });
-
-  const tokens = users
-    .filter(u => haversineKm(lat, lon, u.latitude, u.longitude) <= radiusKm)
-    .map(u => u.fcmToken)
-    .filter(Boolean);
-
-  if (!tokens.length) return;
-
-  const store   = storeName   || 'un negozio vicino a te';
-  const product = productName || 'un nuovo sconto';
-  const until   = expiresAt   ? ` · Valido fino al ${new Date(expiresAt).toLocaleDateString('it-IT')}` : '';
-
-  await sendMulticast(
-    tokens,
-    `🏷️ Sconto segnalato vicino a te — ${store}`,
-    `${product}${until}`,
-    { type: 'community_discount', feedId: String(feedId) },
-  );
-}
+const { processDiscountPost } = require('../services/communityPromo.service');
 
 async function getFeeds(req, res) {
   const { type, page = 1, limit = 20 } = req.query;
@@ -120,67 +58,17 @@ async function createFeed(req, res) {
     include: { user: { select: { id: true, name: true, avatar: true } } },
   });
 
-  // Notifica utenti di zona solo per sconti con foto
+  // Pipeline sconto community (AI + promo + push) — fire-and-forget nel service
   if (type === 'discount' && image) {
-    setImmediate(async () => {
-      try {
-        // Coordinate del post (se l'utente ha selezionato il negozio)
-        let lat = null, lon = null;
-        if (storeLocation) {
-          try {
-            const loc = typeof storeLocation === 'string' ? JSON.parse(storeLocation) : storeLocation;
-            lat = loc?.coordinates?.[1] ?? loc?.latitude ?? null;
-            lon = loc?.coordinates?.[0] ?? loc?.longitude ?? null;
-          } catch {}
-        }
-        // Fallback: posizione attuale dell'utente
-        if (!lat || !lon) {
-          const poster = await prisma.user.findUnique({ where: { id: req.userId }, select: { latitude: true, longitude: true } });
-          lat = poster?.latitude;
-          lon = poster?.longitude;
-        }
-        if (!lat || !lon) return;
-
-        // Estrai info dallo sconto tramite AI (immagine)
-        let firstImage = image;
-        try { const arr = JSON.parse(image); if (Array.isArray(arr)) firstImage = arr[0]; } catch {}
-        const meta = await extractDiscountMeta(firstImage);
-
-        const resolvedStore   = meta.storeName   || storeName   || 'Negozio sconosciuto';
-        const resolvedProduct = meta.productName || description || 'Sconto segnalato dalla community';
-        const resolvedExpiry  = meta.offerExpiresAt;
-
-        // 1. Inserisci in Promo → appare in "Offerte vicino a te"
-        const validUntil = resolvedExpiry
-          ? new Date(resolvedExpiry)
-          : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // default 7 giorni se non estratta
-
-        await prisma.promo.create({
-          data: {
-            storeName:   resolvedStore,
-            storeChain:  meta.storeName || storeName || null,
-            productName: resolvedProduct,
-            imageUrl:    firstImage || null,
-            source:      'community',
-            validFrom:   new Date(),
-            validUntil,
-            latitude:    lat,
-            longitude:   lon,
-          },
-        }).catch(e => console.warn('[feed] promo create error:', e.message));
-
-        // 2. Notifica push utenti vicini
-        await notifyNearbyUsers(
-          req.userId,
-          lat, lon,
-          resolvedStore,
-          resolvedProduct,
-          resolvedExpiry,
-          feed.id,
-        );
-      } catch (e) {
-        console.warn('[feed] notifyNearby error:', e.message);
-      }
+    setImmediate(() => {
+      processDiscountPost({
+        feedId: feed.id,
+        userId: req.userId,
+        storeName,
+        description,
+        storeLocation,
+        image,
+      }).catch(e => console.warn('[feed] processDiscountPost error:', e.message));
     });
   }
 
@@ -208,7 +96,11 @@ async function deleteFeed(req, res) {
   const feed = await prisma.feed.findUnique({ where: { id: req.params.id } });
   if (!feed || feed.userId !== req.userId) return error(res, 'Non trovato o non autorizzato', 404);
 
-  await prisma.feed.delete({ where: { id: req.params.id } });
+  // Elimina anche la Promo generata dal post (niente offerte orfane)
+  await prisma.$transaction([
+    prisma.promo.deleteMany({ where: { feedId: feed.id } }),
+    prisma.feed.delete({ where: { id: feed.id } }),
+  ]);
   return success(res, { message: 'Post eliminato' });
 }
 

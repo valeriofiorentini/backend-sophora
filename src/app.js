@@ -29,6 +29,7 @@ const advisorRoutes      = require('./routes/advisor.routes');
 const shoppingListRoutes = require('./routes/shoppingList.routes');
 
 const { errorHandler }      = require('./middleware/errorHandler');
+const { rateLimitMiddleware } = require('./middleware/rateLimit');
 const { startScheduler }    = require('./services/scraper.service');
 const { ensureCollections } = require('./services/qdrant.service');
 const { triggerBatchForecast } = require('./services/ml.service');
@@ -83,6 +84,11 @@ app.get('/health', (_req, res) => res.json({
   region:  process.env.REGION ?? 'local',
   version: process.env.npm_package_version ?? '1.0.0',
 }));
+
+// ─── Rate limit globale ───────────────────────────────────────────────────────
+// Rete di sicurezza contro scraping/flooding: 300 richieste/minuto per IP.
+// I limiti specifici (auth per-IP, AI per-utente) restano più severi.
+app.use('/api', rateLimitMiddleware(300, 60, 'global'));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/user',           userRoutes);

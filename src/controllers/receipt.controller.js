@@ -694,8 +694,10 @@ async function scanReceipt(req, res) {
   }
 
   // 6. Popola dispensa automaticamente dagli item dello scontrino (fire-and-forget)
+  // Passa sempre receiptId: la funzione dedup per (userId,name) e per sourceReceiptId
+  // così riscansi lo stesso scontrino → aggiunge solo item mancanti, non raddoppia quantità
   if (items.length > 0) {
-    populatePantryFromReceipt(req.userId, items)
+    populatePantryFromReceipt(req.userId, items, receipt.id)
       .catch(e => console.warn('[receipt] pantry sync error:', e.message));
   }
 
@@ -898,13 +900,13 @@ function inferCategory(name) {
   return 'altro';
 }
 
-async function populatePantryFromReceipt(userId, items) {
+async function populatePantryFromReceipt(userId, items, receiptId) {
   // 1. Aggrega gli item dello scontrino per nome normalizzato (lowercase)
   const byKey = new Map();
   for (const item of items) {
     const name = (item.name || item.rawName || '').trim();
     if (!name) continue;
-    if (isNonPantryItem(name)) continue;   // salta buste, shopper, sacchetti, ecc.
+    if (isNonPantryItem(name)) continue;
     const key = name.toLowerCase();
     const qty = clampQuantity(item.quantity);
     if (byKey.has(key)) {
@@ -915,41 +917,48 @@ async function populatePantryFromReceipt(userId, items) {
   }
   if (byKey.size === 0) return;
 
-  // 2. Una sola query per leggere la dispensa esistente dell'utente
+  // 2. Leggi dispensa esistente + quali item vengono già da questo scontrino
   const existing = await prisma.pantryItem.findMany({
     where:  { userId },
-    select: { id: true, name: true, quantity: true },
+    select: { id: true, name: true, quantity: true, sourceReceiptId: true },
   });
   const existingByKey = new Map(existing.map(e => [e.name.trim().toLowerCase(), e]));
 
-  // 3. Separa nuovi (createMany) da esistenti (update con somma quantità)
   const toCreate = [];
   const updates  = [];
+  const now      = new Date();
+
   for (const [key, data] of byKey) {
     const match = existingByKey.get(key);
+
     if (match) {
+      // Item già in dispensa: aggiorna solo se NON viene già da questo stesso scontrino
+      // (evita raddoppio quantità su rescan). Se viene da altro scontrino/manuale → lascia stare.
+      if (match.sourceReceiptId === receiptId) continue; // già aggiunto da questa scansione
+      // Item esiste ma da altra fonte: aggiorna sourceReceiptId (ora "appartiene" a questo scan)
+      // ma NON sommare la quantità — l'utente ce l'ha già in dispensa
       updates.push(
         prisma.pantryItem.update({
           where: { id: match.id },
-          data:  { quantity: match.quantity + data.quantity, inStock: true, updatedAt: new Date() },
+          data:  { sourceReceiptId: receiptId, inStock: true, updatedAt: now },
         }),
       );
     } else {
+      // Item non ancora in dispensa → aggiungilo
       toCreate.push({
         userId,
-        name:     data.name,
-        // categoria dall'LLM se valida, altrimenti dedotta dal nome (keyword)
-        category: VALID_CATEGORIES.has(data.category) ? data.category : inferCategory(data.name),
-        quantity: data.quantity,
-        unit:     'pz',
-        barcode:  data.barcode,
-        inStock:  true,
-        source:   'receipt',
+        name:           data.name,
+        category:       VALID_CATEGORIES.has(data.category) ? data.category : inferCategory(data.name),
+        quantity:       data.quantity,
+        unit:           'pz',
+        barcode:        data.barcode,
+        inStock:        true,
+        source:         'receipt',
+        sourceReceiptId: receiptId ?? null,
       });
     }
   }
 
-  // 4. Batch atomico: createMany (1 query) + gli update
   const ops = [];
   if (toCreate.length > 0) {
     ops.push(prisma.pantryItem.createMany({ data: toCreate, skipDuplicates: true }));

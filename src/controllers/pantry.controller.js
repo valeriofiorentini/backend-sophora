@@ -54,7 +54,20 @@ Identifica TUTTI i prodotti alimentari visibili, anche parzialmente.
 
 Per ogni prodotto stima:
 - nome in italiano chiaro e completo (es. "Latte intero", "Mozzarella fiordilatte", "Pasta penne rigate")
-- categoria tra: latticini | verdure | frutta | carne | pesce | pasta | pane | condimenti | scatolame | bevande | dolci | surgelati | altro
+- categoria tra le seguenti (scegli quella più adatta):
+  • latticini → latte, yogurt, formaggio, mozzarella, burro, panna, ricotta, uova
+  • verdure → ortaggi freschi o in busta, insalata, pomodori, zucchine, carote
+  • frutta → frutta fresca o in busta
+  • carne → carne fresca, salumi, prosciutto, wurstel, mortadella, pollo crudo
+  • pesce → pesce fresco, tonno in scatola, salmone, acciughe, merluzzo
+  • pasta → pasta secca, pasta fresca, riso, gnocchi, cous cous, cereali da cucina
+  • pane → pane, panini, grissini, crackers, fette biscottate, piadine, focaccia
+  • condimenti → olio, aceto, sale, zucchero, salse, ketchup, maionese, pesto, sughi, spezie
+  • scatolame → conserve, legumi in scatola, pelati, passata, tonno in scatola, cibo in lattina
+  • bevande → acqua, succhi, bibite, birra, vino, caffè, tè, latte UHT
+  • dolci → biscotti, merendine, cioccolato, caramelle, gelato, torte, crostate, snack dolci
+  • surgelati → qualsiasi prodotto congelato: pizza surgelata, pizza farcita, supplì, arancini, crocchette, cotolette, sofficini, verdure surgelate, minestre surgelate, piatti pronti surgelati, gelati, ghiaccioli
+  • altro → solo se non rientra in nessuna delle categorie sopra
 - quantità approssimativa visibile (numero)
 - unità di misura: kg | g | l | ml | pz | conf
 - scadenza se leggibile sulle confezioni: "YYYY-MM-DD" oppure null

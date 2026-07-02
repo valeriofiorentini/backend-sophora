@@ -470,9 +470,10 @@ model PantryItem {
   barcode   String?
   expiresAt DateTime?
   notes     String?
-  inStock   Boolean   @default(true)  // false = prodotto finito/consumato
-  source    String?                   // 'receipt' | 'scan' | 'manual'
-  addedAt   DateTime  @default(now())
+  inStock         Boolean   @default(true)  // false = prodotto finito/consumato
+  source          String?                   // 'receipt' | 'scan' | 'manual'
+  sourceReceiptId String?                   // id scontrino che ha aggiunto questo item
+  addedAt         DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

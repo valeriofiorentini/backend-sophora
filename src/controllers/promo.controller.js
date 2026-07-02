@@ -67,8 +67,10 @@ async function enrichWithNearestStore(promos, lat, lon) {
 }
 
 async function getPromos(req, res) {
-  const { latitude, longitude, chain, radius = 50 } = req.query;
+  const { latitude, longitude, chain, radius = 50, page = 1, limit = 10 } = req.query;
   const now = new Date();
+  const pageNum  = Math.max(1, parseInt(page));
+  const pageSize = Math.min(50, Math.max(1, parseInt(limit)));
 
   const promos = await prisma.promo.findMany({
     where: {
@@ -76,7 +78,7 @@ async function getPromos(req, res) {
       ...(chain && { storeChain: { contains: chain, mode: 'insensitive' } }),
     },
     orderBy: { createdAt: 'desc' },
-    take: 100,
+    take: 500, // fetch abbastanza per filtrare per distanza, poi paginiamo in-memory
   });
 
   // Filter by distance if coordinates provided
@@ -87,17 +89,26 @@ async function getPromos(req, res) {
     const r = parseFloat(radius);
 
     result = promos.filter(p => {
-      if (!p.latitude || !p.longitude) return true; // no location = show anyway
+      if (!p.latitude || !p.longitude) return true;
       return distanceKm(lat, lon, p.latitude, p.longitude) <= r;
     });
 
-    // Aggancia l'indirizzo del negozio reale più vicino della catena
     result = await enrichWithNearestStore(result, lat, lon);
-    // Ordina per distanza quando disponibile
     result.sort((a, b) => (a.distanceKm ?? 9999) - (b.distanceKm ?? 9999));
   }
 
-  return success(res, { promos: result, total: result.length });
+  const total = result.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+  const safePage = Math.min(pageNum, totalPages);
+  const paginated = result.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  return success(res, {
+    promos: paginated,
+    total,
+    page: safePage,
+    totalPages,
+    pageSize,
+  });
 }
 
 async function getTodayPromos(req, res) {

@@ -1,11 +1,13 @@
 const router = require('express').Router();
 const c = require('../controllers/group.controller');
 const { auth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { groupCreateSchema, groupJoinSchema } = require('../validation/schemas');
 
 router.use(auth);
 router.get('/', c.getGroups);
-router.post('/create', c.createGroup);
-router.post('/join', c.joinGroup);
+router.post('/create', validate(groupCreateSchema), c.createGroup);
+router.post('/join', validate(groupJoinSchema), c.joinGroup);
 
 // Lista della spesa condivisa
 router.get('/:groupId/list', c.getList);

@@ -7,6 +7,50 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Enum: set di valori chiusi, il DB rifiuta i typo ─────────────────────────
+// NB: restano String i campi con valori aperti/esterni:
+//   Subscription.status (valori raw da Stripe), Voucher.type (catalogo in
+//   evoluzione), Promo.source e PriceHistory.source (writer multipli ad-hoc),
+//   FineTuningJob.status (valori API OpenAI).
+
+enum ReceiptStatus {
+  pending
+  processing
+  processed
+  error
+}
+
+enum VoucherStatus {
+  available
+  redeemed
+  used
+  expired
+}
+
+enum PantrySource {
+  receipt
+  scan
+  manual
+}
+
+enum ListItemSource {
+  manual
+  scan
+  receipt
+}
+
+enum LevelTier {
+  bronze
+  silver
+  gold
+  platinum
+}
+
+enum FeedType {
+  review
+  discount
+}
+
 model User {
   id             String    @id @default(uuid())
   email          String    @unique
@@ -32,6 +76,9 @@ model User {
   b2bDataSharing Boolean   @default(true) // GDPR opt-out: se false non contribuisce a PriceHistory B2B
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
+  // Indice per il bounding box (notifica utenti vicini a uno sconto)
+  @@index([latitude, longitude])
 
   otps              Otp[]
   refreshTokens     RefreshToken[]
@@ -88,6 +135,9 @@ model Store {
 
   products   Product[]
   favourites Favourite[]
+
+  // Indice per il bounding box (negozio più vicino della catena)
+  @@index([latitude, longitude])
 }
 
 model Product {
@@ -151,7 +201,7 @@ model GroupListItem {
   quantity         Float    @default(1)
   price            Float?
   barcode          String?
-  source           String   @default("manual") // manual | scan | receipt
+  source           ListItemSource @default(manual)
   checked          Boolean  @default(false)    // spuntato/comprato
   addedByUserId    String?                      // chi l'ha aggiunta
   assignedMemberId String?                      // a chi è assegnata (divisione costi)
@@ -196,7 +246,7 @@ model ScannedProduct {
 model Feed {
   id            String   @id @default(uuid())
   userId        String
-  type          String
+  type          FeedType
   description   String?
   image         String?
   storeName     String?
@@ -256,8 +306,7 @@ model Receipt {
   totalAmount   Decimal? @db.Decimal(10, 2)
   totalDiscount Decimal? @db.Decimal(10, 2)
   paymentMethod String?
-  // status: pending | processing | processed | error
-  status        String   @default("pending")
+  status        ReceiptStatus @default(pending)
   processedAt   DateTime @default(now())
 
   user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -376,6 +425,8 @@ model Promo {
 
   @@index([storeChain])
   @@index([validUntil])
+  // Indice per il bounding box delle query "offerte vicino a te"
+  @@index([latitude, longitude])
 }
 
 // ─── V4 Gamification ──────────────────────────────────────────────────────────
@@ -383,7 +434,7 @@ model Promo {
 model UserLevel {
   id            String   @id @default(uuid())
   userId        String   @unique
-  level         String   @default("bronze")   // bronze | silver | gold | platinum
+  level         LevelTier @default(bronze)
   totalPoints   Int      @default(0)
   currentStreak Int      @default(0)          // giorni consecutivi di attività
   longestStreak Int      @default(0)
@@ -413,9 +464,8 @@ model Voucher {
   expiresAt   DateTime
   redeemedAt  DateTime?
   usedAt      DateTime?
-  // status: available | redeemed | used | expired
   // NB: i voucher creati da purchaseVoucher partono da 'redeemed' (già acquistati)
-  status      String    @default("available")
+  status      VoucherStatus @default(available)
 
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   userLevel UserLevel? @relation(fields: [userLevelId], references: [id])
@@ -471,7 +521,7 @@ model PantryItem {
   expiresAt DateTime?
   notes     String?
   inStock         Boolean   @default(true)  // false = prodotto finito/consumato
-  source          String?                   // 'receipt' | 'scan' | 'manual'
+  source          PantrySource?
   sourceReceiptId String?                   // id scontrino che ha aggiunto questo item
   addedAt         DateTime  @default(now())
   updatedAt DateTime  @updatedAt

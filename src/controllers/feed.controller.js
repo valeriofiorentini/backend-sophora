@@ -2,6 +2,7 @@ const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { uploadToS3 } = require('../config/s3');
 const { sendMulticast } = require('../services/push.service');
+const { haversineKm, bboxWhere } = require('../services/geo.service');
 const OpenAI = require('openai');
 
 const openai = new OpenAI({
@@ -9,15 +10,6 @@ const openai = new OpenAI({
   baseURL: process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined,
 });
 const MODEL = process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o';
-
-// Distanza in km tra due coordinate (formula Haversine)
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
 
 // Estrae storeName e offerExpiresAt dalla foto del post (fire-and-forget)
 async function extractDiscountMeta(imageUrl) {
@@ -48,8 +40,8 @@ async function notifyNearbyUsers(posterId, lat, lon, storeName, productName, exp
     where: {
       id:       { not: posterId },
       fcmToken: { not: null },
-      latitude:  { not: null },
-      longitude: { not: null },
+      // bounding box: carica solo gli utenti nel riquadro, non tutta la tabella
+      ...bboxWhere(lat, lon, radiusKm),
     },
     select: { id: true, fcmToken: true, latitude: true, longitude: true },
   });
@@ -77,10 +69,13 @@ async function getFeeds(req, res) {
   const { type, page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
+  // type è un enum nel DB: valori sconosciuti vengono ignorati (niente 500)
+  const validType = ['review', 'discount'].includes(type) ? type : undefined;
+
   const feeds = await prisma.feed.findMany({
     where: {
       isApproved: true,
-      ...(type && { type }),
+      ...(validType && { type: validType }),
     },
     include: { user: { select: { id: true, name: true, avatar: true } } },
     orderBy: { createdAt: 'desc' },

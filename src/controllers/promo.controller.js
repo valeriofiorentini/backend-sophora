@@ -1,14 +1,6 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
-
-function distanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+const { haversineKm: distanceKm, bboxWhere } = require('../services/geo.service');
 
 // "Conad Superstore" / "CONAD CITY" → "conad" (parola chiave catena per il match con Store)
 function chainKey(name) {
@@ -30,8 +22,10 @@ function chainKey(name) {
 async function enrichWithNearestStore(promos, lat, lon) {
   if (!lat || !lon || promos.length === 0) return promos;
 
-  // Carica i negozi una volta sola, raggruppati per chiave catena
+  // Solo i negozi entro 100 km dall'utente: il bounding box usa gli indici
+  // e evita di caricare l'intera tabella a ogni richiesta
   const stores = await prisma.store.findMany({
+    where: bboxWhere(lat, lon, 100),
     select: { name: true, address: true, latitude: true, longitude: true, chain: true },
     take: 5000,
   });
@@ -72,22 +66,32 @@ async function getPromos(req, res) {
   const pageNum  = Math.max(1, parseInt(page));
   const pageSize = Math.min(50, Math.max(1, parseInt(limit)));
 
+  const lat = parseFloat(latitude);
+  const lon = parseFloat(longitude);
+  const r   = Math.min(parseFloat(radius) || 50, 500);
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+
   const promos = await prisma.promo.findMany({
     where: {
       validUntil: { gt: now },
       ...(chain && { storeChain: { contains: chain, mode: 'insensitive' } }),
+      // Bounding box direttamente nel WHERE: le promo lontane non vengono
+      // proprio caricate. Quelle senza coordinate (nazionali) passano sempre.
+      ...(hasCoords && {
+        OR: [
+          { latitude: null },
+          { longitude: null },
+          { AND: [bboxWhere(lat, lon, r)] },
+        ],
+      }),
     },
     orderBy: { createdAt: 'desc' },
-    take: 500, // fetch abbastanza per filtrare per distanza, poi paginiamo in-memory
+    take: 500,
   });
 
-  // Filter by distance if coordinates provided
+  // Filtro circolare preciso + arricchimento indirizzo
   let result = promos;
-  if (latitude && longitude) {
-    const lat = parseFloat(latitude);
-    const lon = parseFloat(longitude);
-    const r = parseFloat(radius);
-
+  if (hasCoords) {
     result = promos.filter(p => {
       if (!p.latitude || !p.longitude) return true;
       return distanceKm(lat, lon, p.latitude, p.longitude) <= r;

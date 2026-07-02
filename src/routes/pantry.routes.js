@@ -6,6 +6,8 @@ const router     = express.Router();
 const c          = require('../controllers/pantry.controller');
 const { auth }   = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { validate } = require('../middleware/validate');
+const { pantryItemSchema, pantryUpdateSchema } = require('../validation/schemas');
 
 // Multer — immagini dispensa (max 10 MB, solo immagini)
 const upload = multer({
@@ -25,8 +27,8 @@ router.post('/scan',     upload.single('image'), asyncHandler(c.scanPantry));
 
 // CRUD dispensa
 router.get('/',          asyncHandler(c.getPantry));
-router.post('/items',    asyncHandler(c.addItem));
-router.put('/:id',       asyncHandler(c.updateItem));
+router.post('/items',    validate(pantryItemSchema),   asyncHandler(c.addItem));
+router.put('/:id',       validate(pantryUpdateSchema), asyncHandler(c.updateItem));
 router.delete('/clear',  asyncHandler(c.clearPantry));   // prima di /:id
 router.delete('/:id',    asyncHandler(c.deleteItem));
 

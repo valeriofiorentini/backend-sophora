@@ -13,19 +13,10 @@
 
 const prisma = require('../config/database');
 const { sendPush } = require('./push.service');
+const { haversineKm: distanceKm } = require('./geo.service');
 
 const NEAR_RADIUS_KM = 30;   // raggio entro cui un'offerta è "vicina"
 const MAX_PROMOS_LISTED = 3; // quante offerte citare nel testo della push
-
-function distanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 /**
  * Notifica tutti gli utenti idonei delle nuove offerte vicine.

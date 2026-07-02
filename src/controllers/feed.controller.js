@@ -147,15 +147,40 @@ async function createFeed(req, res) {
         if (!lat || !lon) return;
 
         // Estrai info dallo sconto tramite AI (immagine)
-        const firstImage = Array.isArray(JSON.parse(image || '[]')) ? JSON.parse(image)[0] : image;
+        let firstImage = image;
+        try { const arr = JSON.parse(image); if (Array.isArray(arr)) firstImage = arr[0]; } catch {}
         const meta = await extractDiscountMeta(firstImage);
 
+        const resolvedStore   = meta.storeName   || storeName   || 'Negozio sconosciuto';
+        const resolvedProduct = meta.productName || description || 'Sconto segnalato dalla community';
+        const resolvedExpiry  = meta.offerExpiresAt;
+
+        // 1. Inserisci in Promo → appare in "Offerte vicino a te"
+        const validUntil = resolvedExpiry
+          ? new Date(resolvedExpiry)
+          : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // default 7 giorni se non estratta
+
+        await prisma.promo.create({
+          data: {
+            storeName:   resolvedStore,
+            storeChain:  meta.storeName || storeName || null,
+            productName: resolvedProduct,
+            imageUrl:    firstImage || null,
+            source:      'community',
+            validFrom:   new Date(),
+            validUntil,
+            latitude:    lat,
+            longitude:   lon,
+          },
+        }).catch(e => console.warn('[feed] promo create error:', e.message));
+
+        // 2. Notifica push utenti vicini
         await notifyNearbyUsers(
           req.userId,
           lat, lon,
-          meta.storeName || storeName,
-          meta.productName || description,
-          meta.offerExpiresAt,
+          resolvedStore,
+          resolvedProduct,
+          resolvedExpiry,
           feed.id,
         );
       } catch (e) {

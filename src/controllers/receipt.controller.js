@@ -151,6 +151,8 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 5b. NESSUN PRODOTTO SALTATO: Conta le righe prodotto sullo scontrino e verifica che l'array "items" abbia lo stesso numero di elementi. Se una riga ha un prezzo valido e non è un subtotale/IVA, deve essere inclusa.
 
+5c. VERIFICA TOTALE — CONTROLLO FINALE: Dopo aver estratto tutti gli item, somma mentalmente i loro totalPrice (al netto degli sconti per articolo). Il risultato deve avvicinarsi al totalAmount dello scontrino (±0,10€ per arrotondamenti IVA). Se la somma si discosta di più, significa che hai letto male qualche prezzo — riesamina le righe con cifre ambigue (es. 8 vs 6, 0 vs 6, 1 vs 4) e correggile prima di rispondere.
+
 6. FOTO SFOCATA O PARZIALE: Se un valore non è leggibile usa null. Non inventare prezzi.
 
 7. DATA: Lo scontrino può mostrare la data in formato GG/MM/AAAA oppure GG/MM/AA — converti sempre in YYYY-MM-DD.

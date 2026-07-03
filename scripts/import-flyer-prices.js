@@ -62,6 +62,19 @@ const SUPERMARKETS = [
   'a&o', 'tuodi', 'tuodì', 'il gigante', 'pim', 'sole 365', 'dpiu', 'dpiù',
   'elite', 'gros', 'u2', 'pellicano', 'emme piu', 'emme più', 'dem', 'iper dem',
   'doc', 'cts', 'castoro',
+  // Varianti composte reali viste su Tiendeo (Coop si presenta quasi sempre
+  // così, mai come "coop" da solo — il match esatto le perdeva tutte)
+  'ipercoop', 'extracoop', 'superstore coop', 'coop centro italia', 'iper coop',
+  'nova coop', 'coop alleanza', 'unicoop', 'coop lombardia', 'coop liguria',
+];
+
+// Insegne che contengono il nome di una catena come sotto-brand ma NON sono
+// supermercati (farmacia, petshop, elettronica...) — vanno escluse anche se
+// il nome contiene una parola della whitelist sopra (es. "Parafarmacia Conad").
+const NON_SUPERMARKET_KEYWORDS = [
+  'parafarmacia', 'farmacia', 'pet store', 'petstore', 'giardinaggio',
+  'elettronica', 'bricolage', 'brico', 'expert', 'euronics', 'mediaworld',
+  'cartoleria', 'ottica', 'profumeria',
 ];
 
 const FLYER_PROMPT = `Analizza questo volantino promozionale italiano. Restituisci SOLO un JSON valido:
@@ -71,6 +84,17 @@ Estrai TUTTI i prodotti visibili con i loro prezzi. Se non leggi un prezzo usa n
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const normKey = (n) => String(n).toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+
+// Un'insegna di Tiendeo è un supermercato se il nome CONTIENE una parola della
+// whitelist (non uguaglianza esatta: "ipercoop" non è mai === "coop"), a meno
+// che non sia un sotto-brand non alimentare (farmacia, petshop...).
+function isSupermarketFlyer(retailerName) {
+  const key = String(retailerName || '').trim().toLowerCase();
+  if (!key) return false;
+  const isSupermarket = SUPERMARKETS.some(s => key.includes(s));
+  const isExcluded = NON_SUPERMARKET_KEYWORDS.some(k => key.includes(k));
+  return isSupermarket && !isExcluded;
+}
 
 async function getFlyers(city) {
   const { data: html } = await axios.get(`https://www.tiendeo.it/${city}`, { timeout: 25000, headers: { 'User-Agent': UA } });
@@ -118,7 +142,7 @@ async function importFlyerPrices() {
       for (const f of flyers) {
         const name = (f.retailerName || '').trim();
         const key = name.toLowerCase();
-        if (SUPERMARKETS.includes(key) && f.imageAssets?.big && !byChain.has(key) && !alreadyDone.has(key)) {
+        if (isSupermarketFlyer(name) && f.imageAssets?.big && !byChain.has(key) && !alreadyDone.has(key)) {
           byChain.set(key, { name, img: f.imageAssets.big, endDate: f.end_date });
         }
       }
@@ -144,7 +168,7 @@ async function importFlyerPrices() {
   return total;
 }
 
-module.exports = { importFlyerPrices };
+module.exports = { importFlyerPrices, isSupermarketFlyer };
 
 // Esecuzione diretta da CLI
 if (require.main === module) {

@@ -11,10 +11,10 @@ async function sendOtpEmail(to, otp) {
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
     to,
-    subject: 'EasyMarket — Codice di verifica',
+    subject: 'Shopora — Codice di verifica',
     html: `
       <div style="font-family:sans-serif;max-width:400px;margin:auto">
-        <h2>EasyMarket</h2>
+        <h2>Shopora</h2>
         <p>Il tuo codice di verifica è:</p>
         <h1 style="letter-spacing:8px;color:#2563eb">${otp}</h1>
         <p>Scade tra 10 minuti.</p>
@@ -27,10 +27,10 @@ async function sendPasswordResetEmail(to, otp) {
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
     to,
-    subject: 'EasyMarket — Reset password',
+    subject: 'Shopora — Reset password',
     html: `
       <div style="font-family:sans-serif;max-width:400px;margin:auto">
-        <h2>EasyMarket</h2>
+        <h2>Shopora</h2>
         <p>Usa questo codice per reimpostare la password:</p>
         <h1 style="letter-spacing:8px;color:#2563eb">${otp}</h1>
         <p>Scade tra 10 minuti. Se non hai richiesto il reset, ignora questa email.</p>
@@ -70,10 +70,10 @@ async function sendMonthlyReportEmail(to, report, user) {
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
     to,
-    subject: `EasyMarket — Report Spesa di ${monthName} ${report.year}`,
+    subject: `Shopora — Report Spesa di ${monthName} ${report.year}`,
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: auto; color: #333;">
-        <h2 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px;">EasyMarket — Report Spesa</h2>
+        <h2 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px;">Shopora — Report Spesa</h2>
         <p>Ciao ${user.name || 'utente'},</p>
         <p>Ecco il riepilogo delle tue spese per il mese di <strong>${monthName} ${report.year}</strong>.</p>
         
@@ -105,7 +105,7 @@ async function sendMonthlyReportEmail(to, report, user) {
         </table>
         
         <p style="margin-top: 30px; font-size: 12px; color: #6b7280; text-align: center;">
-          Generato automaticamente da EasyMarket AI.
+          Generato automaticamente da Shopora AI.
         </p>
       </div>
     `,

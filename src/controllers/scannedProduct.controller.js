@@ -228,7 +228,7 @@ function generateReportHtml(report, userId) {
     <html>
     <head>
       <meta charset="utf-8">
-      <title>EasyMarket Report Spesa — ${monthName} ${report.year}</title>
+      <title>Shopora Report Spesa — ${monthName} ${report.year}</title>
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #333; line-height: 1.5; padding: 20px; max-width: 800px; margin: 0 auto; }
         h1, h2, h3 { color: #1e3a8a; }
@@ -247,7 +247,7 @@ function generateReportHtml(report, userId) {
     </head>
     <body>
       <div class="header">
-        <h1>EasyMarket</h1>
+        <h1>Shopora</h1>
         <p>Report mensile delle spese — <strong>${monthName} ${report.year}</strong></p>
       </div>
 

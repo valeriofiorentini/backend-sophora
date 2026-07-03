@@ -141,36 +141,35 @@ async function scanPantry(req, res) {
     return success(res, { items: [], summary: parsed.summary || 'Nessun prodotto identificato', added: 0 });
   }
 
-  // 3. Salva i prodotti riconosciuti nella dispensa
-  //    Usa upsert-like: per ogni prodotto con stesso nome, aggiorna quantità
-  //    Per prodotti nuovi, crea record
+  // 3. Salva i prodotti riconosciuti nella dispensa.
+  //    Prima: 2 query per prodotto in loop, senza transazione → su errore a metà
+  //    la dispensa restava parziale. Ora: 1 lettura + tutte le scritture in
+  //    un'unica $transaction (atomico) — o entra tutto o niente.
   const now = new Date();
   let addedCount = 0;
 
-  for (const item of scannedItems) {
-    if (!item.name?.trim()) continue;
+  const validItems = scannedItems.filter(i => i.name?.trim());
+  const existing = await prisma.pantryItem.findMany({
+    where:  { userId: req.userId },
+    select: { id: true, name: true, quantity: true, expiresAt: true, notes: true },
+  });
+  const existingByKey = new Map(existing.map(e => [e.name.trim().toLowerCase(), e]));
 
-    const normalizedName = item.name.trim().toLowerCase();
-    const existing = await prisma.pantryItem.findFirst({
-      where: {
-        userId: req.userId,
-        name:   { equals: normalizedName, mode: 'insensitive' },
-      },
-    });
-
-    if (existing) {
-      // Aggiorna quantità sommando
-      await prisma.pantryItem.update({
-        where: { id: existing.id },
+  const ops = [];
+  for (const item of validItems) {
+    const match = existingByKey.get(item.name.trim().toLowerCase());
+    if (match) {
+      ops.push(prisma.pantryItem.update({
+        where: { id: match.id },
         data: {
-          quantity:  existing.quantity + (parseFloat(item.quantity) || 1),
-          expiresAt: item.expiresAt ? new Date(item.expiresAt) : existing.expiresAt,
-          notes:     item.notes ?? existing.notes,
+          quantity:  match.quantity + (parseFloat(item.quantity) || 1),
+          expiresAt: item.expiresAt ? new Date(item.expiresAt) : match.expiresAt,
+          notes:     item.notes ?? match.notes,
           updatedAt: now,
         },
-      });
+      }));
     } else {
-      await prisma.pantryItem.create({
+      ops.push(prisma.pantryItem.create({
         data: {
           userId:    req.userId,
           name:      item.name.trim(),
@@ -180,10 +179,11 @@ async function scanPantry(req, res) {
           expiresAt: item.expiresAt ? new Date(item.expiresAt) : null,
           notes:     item.notes ?? null,
         },
-      });
+      }));
       addedCount++;
     }
   }
+  if (ops.length > 0) await prisma.$transaction(ops);
 
   // 4. Leggi dispensa aggiornata
   const pantry = await prisma.pantryItem.findMany({

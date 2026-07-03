@@ -165,6 +165,62 @@ const favouriteSchema = z.object({
   storeId: reqStr(64),
 }).passthrough();
 
+// ─── Route optimizer ──────────────────────────────────────────────────────────
+const routeOptimizeSchema = z.object({
+  userLat:    z.coerce.number().min(-90).max(90),
+  userLon:    z.coerce.number().min(-180).max(180),
+  storeIds:   z.array(z.string().max(64)).min(1).max(20),
+  cartItems:  z.array(z.any()).max(200).optional(),
+  returnHome: optBool(),
+}).passthrough();
+
+// ─── Lista spesa smart — stima prezzi ────────────────────────────────────────
+const estimateListSchema = z.object({
+  items: z.array(z.object({
+    name:     reqStr(120),
+    quantity: optNum(0.01, 999),
+  }).passthrough()).min(1).max(100),
+  budget:  optNum(0, 100_000),
+  userLat: optNum(-90, 90),
+  userLon: optNum(-180, 180),
+}).passthrough();
+
+// ─── Fine-tuning: correzione scontrino (l'utente corregge l'OCR) ─────────────
+const receiptCorrectionSchema = z.object({
+  receiptId:           reqStr(64),
+  consent:             z.literal(true), // esplicito: senza consenso non si accetta
+  correctedItems:      z.array(z.any()).max(300).optional(),
+  correctedTotal:      optNum(0, 100_000),
+  correctedStoreName:  optStr(200),
+  correctedStoreChain: optStr(100),
+}).passthrough();
+
+// ─── Similarity (indicizzazione/ricerca prodotti) ─────────────────────────────
+const similarityFindSchema = z.object({
+  barcode:  optStr(64),
+  name:     optStr(200),
+  category: optStr(60),
+  brand:    optStr(100),
+}).passthrough()
+  .refine(d => d.barcode || d.name, { message: 'barcode o name obbligatorio' });
+
+const similarityIndexSchema = z.object({
+  name:     reqStr(200),
+  barcode:  optStr(64),
+  category: optStr(60),
+  brand:    optStr(100),
+  image:    optStr(1000),
+}).passthrough();
+
+// ─── Gamification: voucher ────────────────────────────────────────────────────
+const voucherPurchaseSchema = z.object({
+  catalogId: reqStr(64),
+}).passthrough();
+
+const voucherUseSchema = z.object({
+  code: reqStr(40),
+}).passthrough();
+
 module.exports = {
   signupSchema,
   loginSchema,
@@ -181,4 +237,11 @@ module.exports = {
   nutritionProfileSchema,
   checkCartSchema,
   favouriteSchema,
+  routeOptimizeSchema,
+  estimateListSchema,
+  receiptCorrectionSchema,
+  similarityFindSchema,
+  similarityIndexSchema,
+  voucherPurchaseSchema,
+  voucherUseSchema,
 };

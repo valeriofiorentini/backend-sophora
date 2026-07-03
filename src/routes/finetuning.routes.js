@@ -13,12 +13,14 @@ const router       = require('express').Router();
 const { auth }     = require('../middleware/auth');
 const adminOnly    = require('../middleware/adminOnly');
 const asyncHandler = require('../middleware/asyncHandler');
+const { validate } = require('../middleware/validate');
+const { receiptCorrectionSchema } = require('../validation/schemas');
 const c            = require('../controllers/finetuning.controller');
 
 router.use(auth);
 
 // Utenti autenticati: invio correzioni e statistiche pubbliche
-router.post('/correct', asyncHandler(c.submitCorrection));
+router.post('/correct', validate(receiptCorrectionSchema), asyncHandler(c.submitCorrection));
 router.get('/stats',    asyncHandler(c.getStats));
 
 // Solo admin: operazioni costose / accesso dati aggregati

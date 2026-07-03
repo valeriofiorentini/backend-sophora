@@ -32,6 +32,10 @@ async function create(req, res) {
 }
 
 async function getMergedProductsAndReceipts(userId, startDate, endDate) {
+  // Cap difensivo: la finestra è mensile, ma un range anomalo dal client
+  // non deve poter caricare l'intero storico utente in memoria.
+  const HARD_CAP = 2000;
+
   // 1. Fetch scanned products
   const scannedProducts = await prisma.scannedProduct.findMany({
     where: {
@@ -39,6 +43,7 @@ async function getMergedProductsAndReceipts(userId, startDate, endDate) {
       timestamp: { gte: startDate, lte: endDate },
     },
     orderBy: { timestamp: 'desc' },
+    take: HARD_CAP,
   });
 
   // 2. Fetch processed receipts with their items
@@ -59,6 +64,8 @@ async function getMergedProductsAndReceipts(userId, startDate, endDate) {
     include: {
       items: true,
     },
+    orderBy: { processedAt: 'desc' },
+    take: 500, // ~500 scontrini/mese è già oltre ogni uso reale
   });
 
   // 3. Map scanned products to standardized format

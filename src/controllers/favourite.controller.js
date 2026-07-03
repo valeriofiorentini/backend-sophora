@@ -31,4 +31,9 @@ async function removeFavourite(req, res) {
   return success(res, { message: 'Rimosso dai preferiti' });
 }
 
-module.exports = { getFavourites, addFavourite, removeFavourite };
+async function removeAllFavourites(req, res) {
+  await prisma.favourite.deleteMany({ where: { userId: req.userId } });
+  return success(res, { message: 'Tutti i negozi rimossi dai preferiti' });
+}
+
+module.exports = { getFavourites, addFavourite, removeFavourite, removeAllFavourites };

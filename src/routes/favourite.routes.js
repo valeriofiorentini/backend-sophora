@@ -1,12 +1,11 @@
 const router = require('express').Router();
 const c = require('../controllers/favourite.controller');
 const { auth } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { favouriteSchema } = require('../validation/schemas');
 
 router.use(auth);
 router.get('/', c.getFavourites);
-router.post('/add', validate(favouriteSchema), c.addFavourite);
+router.post('/add', c.addFavourite);
+router.delete('/delete-all', c.removeAllFavourites);
 router.delete('/delete/:storeId', c.removeFavourite);
 
 module.exports = router;

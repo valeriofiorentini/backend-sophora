@@ -90,7 +90,7 @@ async function getMergedProductsAndReceipts(userId, startDate, endDate) {
     barcode: item.barcode,
     name: item.name,
     productName: item.name, // Frontend compatibility
-    price: item.price,
+    price: Number(item.price), // Decimal→Number al confine API (il client fa aritmetica)
     quantity: item.quantity,
     storeId: item.storeId || null,
     storeName: item.storeName || 'Altro', // nome dal campo dedicato (non più da storeId)

@@ -233,7 +233,7 @@ model ScannedProduct {
   groupMemberId String?
   barcode       String?
   name          String
-  price         Float
+  price         Decimal  @db.Decimal(10, 2) // denaro: Decimal, non Float (no deriva)
   quantity      Int      @default(1)
   storeId       String?  // FK opzionale verso Store (id valido o null)
   storeName     String?  // nome negozio libero (scansioni senza id Store)

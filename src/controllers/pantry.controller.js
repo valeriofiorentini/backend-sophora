@@ -308,7 +308,7 @@ async function clearPantry(req, res) {
 async function dedupePantry(req, res) {
   const items = await prisma.pantryItem.findMany({
     where: { userId: req.userId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { addedAt: 'asc' }, // PantryItem non ha createdAt, ha addedAt/updatedAt
   });
 
   const groups = new Map(); // normalizedKey -> [items in ordine di creazione]

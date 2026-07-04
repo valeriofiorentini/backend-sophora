@@ -305,20 +305,31 @@ async function dedupePantry(req, res) {
 // ─── POST /api/pantry/recipes ─────────────────────────────────────────────────
 async function suggestRecipes(req, res) {
   const { people = 2, mealType = 'pranzo o cena', dietNotes = '' } = req.body;
+  // customIngredients: selezione esplicita dell'utente (checkbox su prodotti
+  // in dispensa + testo libero per ingredienti non presenti) — se assente,
+  // comportamento invariato: usa tutta la dispensa.
+  const customIngredients = Array.isArray(req.body.customIngredients)
+    ? req.body.customIngredients.filter(s => typeof s === 'string' && s.trim()).slice(0, 60)
+    : null;
 
-  const items = await prisma.pantryItem.findMany({
-    where:   { userId: req.userId },
-    orderBy: { expiresAt: 'asc' }, // prima le cose in scadenza
-  });
+  let pantryList;
+  if (customIngredients && customIngredients.length > 0) {
+    pantryList = customIngredients.map(name => `- ${name.trim()}`).join('\n');
+  } else {
+    const items = await prisma.pantryItem.findMany({
+      where:   { userId: req.userId },
+      orderBy: { expiresAt: 'asc' }, // prima le cose in scadenza
+    });
 
-  if (items.length === 0) {
-    return error(res, 'La dispensa è vuota. Aggiungi prodotti prima di chiedere ricette.');
+    if (items.length === 0) {
+      return error(res, 'La dispensa è vuota. Aggiungi prodotti prima di chiedere ricette.');
+    }
+
+    // Costruisci lista dispensa per il prompt
+    pantryList = items
+      .map(i => `- ${i.name} (${i.quantity} ${i.unit ?? 'pz'}${i.expiresAt ? `, scade ${i.expiresAt.toLocaleDateString('it-IT')}` : ''})`)
+      .join('\n');
   }
-
-  // Costruisci lista dispensa per il prompt
-  const pantryList = items
-    .map(i => `- ${i.name} (${i.quantity} ${i.unit ?? 'pz'}${i.expiresAt ? `, scade ${i.expiresAt.toLocaleDateString('it-IT')}` : ''})`)
-    .join('\n');
 
   // Leggi profilo nutrizionale e lingua utente
   const [nutritionProfile, userLang] = await Promise.all([
@@ -348,7 +359,7 @@ async function suggestRecipes(req, res) {
     const result = JSON.parse(response.choices[0].message.content);
     return success(res, {
       recipes:     result.recipes ?? [],
-      pantryCount: items.length,
+      pantryCount: customIngredients ? customIngredients.length : pantryList.split('\n').length,
     });
   } catch (err) {
     console.error('[pantry] recipes error:', err.message);

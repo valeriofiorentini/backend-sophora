@@ -221,6 +221,27 @@ const voucherUseSchema = z.object({
   code: reqStr(40),
 }).passthrough();
 
+// ─── Chat AI ──────────────────────────────────────────────────────────────────
+// message: obbligatorio, cap a 2000 char (allineato a MESSAGE_MAX_LEN del
+// controller — limita costi OpenAI e DoS). sessionId opzionale (nuova sessione
+// se assente).
+const chatMessageSchema = z.object({
+  message:   reqStr(2000),
+  sessionId: optStr(64),
+}).passthrough();
+
+// ─── Carrello ─────────────────────────────────────────────────────────────────
+const cartAddSchema = z.object({
+  productId: reqStr(64),
+  quantity:  optNum(1, 999),
+}).passthrough();
+
+const cartUpdateSchema = z.object({
+  productId: reqStr(64),
+  // quantity 0 = rimuovi dal carrello (gestito dal controller)
+  quantity:  z.coerce.number().int().min(0).max(999),
+}).passthrough();
+
 module.exports = {
   signupSchema,
   loginSchema,
@@ -244,4 +265,7 @@ module.exports = {
   similarityIndexSchema,
   voucherPurchaseSchema,
   voucherUseSchema,
+  chatMessageSchema,
+  cartAddSchema,
+  cartUpdateSchema,
 };

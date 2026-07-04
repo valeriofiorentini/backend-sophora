@@ -90,3 +90,37 @@ test('similarity find: senza barcode né name → rifiutato', () => {
   assert.strictEqual(s.similarityFindSchema.safeParse({ category: 'x' }).success, false);
   assert.strictEqual(s.similarityFindSchema.safeParse({ name: 'Latte' }).success, true);
 });
+
+// ─── Chat ─────────────────────────────────────────────────────────────────────
+test('chat: message vuoto/mancante → rifiutato', () => {
+  assert.strictEqual(s.chatMessageSchema.safeParse({}).success, false);
+  assert.strictEqual(s.chatMessageSchema.safeParse({ message: '' }).success, false);
+});
+
+test('chat: message valido → ok, sessionId opzionale', () => {
+  assert.strictEqual(s.chatMessageSchema.safeParse({ message: 'Ciao' }).success, true);
+  assert.strictEqual(s.chatMessageSchema.safeParse({ message: 'Ciao', sessionId: 'abc' }).success, true);
+});
+
+test('chat: message oltre 2000 char → rifiutato', () => {
+  assert.strictEqual(s.chatMessageSchema.safeParse({ message: 'x'.repeat(2001) }).success, false);
+});
+
+// ─── Carrello ─────────────────────────────────────────────────────────────────
+test('cart add: senza productId → rifiutato', () => {
+  assert.strictEqual(s.cartAddSchema.safeParse({ quantity: 2 }).success, false);
+});
+
+test('cart add: productId ok, quantity coercita da stringa', () => {
+  const r = s.cartAddSchema.safeParse({ productId: 'p1', quantity: '3' });
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.data.quantity, 3);
+});
+
+test('cart update: quantity 0 ammessa (= rimuovi)', () => {
+  assert.strictEqual(s.cartUpdateSchema.safeParse({ productId: 'p1', quantity: 0 }).success, true);
+});
+
+test('cart update: quantity decimale → rifiutata (solo interi)', () => {
+  assert.strictEqual(s.cartUpdateSchema.safeParse({ productId: 'p1', quantity: 2.5 }).success, false);
+});

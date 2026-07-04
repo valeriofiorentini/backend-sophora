@@ -7,6 +7,7 @@ const { scannedProductSchema } = require('../validation/schemas');
 router.use(auth);
 router.post('/create', validate(scannedProductSchema), c.create);
 router.get('/export/:isEmail?', c.exportReport);
+router.get('/first-activity', c.getFirstActivityDate);
 router.get('/get/:timeStamp', c.getByTimestamp);
 router.delete('/delete/:id', c.deleteById);
 

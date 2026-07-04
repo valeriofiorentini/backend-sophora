@@ -295,6 +295,38 @@ function generateReportHtml(report, userId) {
   `;
 }
 
+// Prima data di attività dell'utente (primo scontrino o primo prodotto
+// scansionato) — serve al frontend per sapere da che mese mostrare il
+// confronto storico, invece di generare sempre i 12 mesi dell'anno corrente
+// (che mostrerebbero "€0" ingannevoli per i mesi prima che l'utente iniziasse
+// a usare l'app).
+async function getFirstActivityDate(req, res) {
+  const [firstReceipt, firstScan] = await Promise.all([
+    prisma.receipt.findFirst({
+      where: { userId: req.userId, status: 'processed' },
+      orderBy: [{ receiptDate: 'asc' }, { processedAt: 'asc' }],
+      select: { receiptDate: true, processedAt: true },
+    }),
+    prisma.scannedProduct.findFirst({
+      where: { userId: req.userId },
+      orderBy: { timestamp: 'asc' },
+      select: { timestamp: true },
+    }),
+  ]);
+
+  const dates = [
+    firstReceipt?.receiptDate,
+    firstReceipt?.processedAt,
+    firstScan?.timestamp,
+  ].filter(Boolean);
+
+  const firstDate = dates.length > 0
+    ? new Date(Math.min(...dates.map(d => new Date(d).getTime())))
+    : null;
+
+  return success(res, { firstDate });
+}
+
 async function exportReport(req, res) {
   const { month, year } = req.query;
   const { isEmail } = req.params;
@@ -366,4 +398,4 @@ async function exportReport(req, res) {
   }
 }
 
-module.exports = { create, getByTimestamp, deleteById, exportReport };
+module.exports = { create, getByTimestamp, deleteById, exportReport, getFirstActivityDate };

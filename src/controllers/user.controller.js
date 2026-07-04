@@ -560,7 +560,6 @@ async function getPlanUsage(req, res) {
       { label: 'Spesa di gruppo',                  unlocked: true },
       { label: 'Previsione prezzi',                unlocked: true },
       { label: 'Cosa dimenticavi di comprare',     unlocked: true },
-      { label: 'Percorso ottimale tra negozi',     unlocked: isPremium },
       { label: 'Avvisi prezzo in aumento',         unlocked: isPremium },
       { label: 'Domande AI illimitate',            unlocked: isPremium },
       { label: 'Export storia spesa via email',    unlocked: isPremium },

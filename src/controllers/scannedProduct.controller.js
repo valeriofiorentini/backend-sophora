@@ -13,12 +13,18 @@ async function create(req, res) {
 
   const finalStore = storeId || storeName;
 
+  // Arrotonda a 2 decimali alla scrittura: evita di persistere valori con
+  // deriva float (es. 28.129999999999992) che poi si propagano nelle somme.
+  // (Migrazione piena a Decimal rimandata: cambierebbe il tipo di price in
+  //  ogni risposta API + aritmetica backend — vedi nota nel commit.)
+  const roundedPrice = Math.round((parseFloat(price) || 0) * 100) / 100;
+
   const sp = await prisma.scannedProduct.create({
     data: {
       userId: req.userId,
       barcode,
       name: finalName,
-      price: parseFloat(price),
+      price: roundedPrice,
       quantity: parseInt(quantity),
       storeId: finalStore,
       groupId,

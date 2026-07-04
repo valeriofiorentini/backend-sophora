@@ -172,7 +172,13 @@ async function populatePantryFromReceipt(userId, items, receiptId) {
       toCreate.push({
         userId,
         name:           data.name,
-        category:       VALID_CATEGORIES.has(data.category) ? data.category : inferCategory(data.name),
+        // "altro" è la categoria jolly: se l'AI la assegna ma il nome contiene
+        // una parola chiave nota (es. "uova" → latticini), l'inferenza per
+        // parola chiave ha priorità — evita che prodotti chiari (uova, pane,
+        // ecc.) finiscano in "Altro" solo perché l'AI non li ha riconosciuti.
+        category: (VALID_CATEGORIES.has(data.category) && data.category !== 'altro')
+          ? data.category
+          : inferCategory(data.name),
         quantity:       data.quantity,
         unit:           'pz',
         barcode:        data.barcode,

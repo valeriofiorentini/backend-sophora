@@ -26,6 +26,13 @@ test('inferCategory: prodotto sconosciuto → altro', () => {
   assert.strictEqual(inferCategory('Xyzabc introvabile'), 'altro');
 });
 
+test('inferCategory: uova → latticini anche con nome grezzo/brand sconosciuto', () => {
+  // Caso reale: l'AI aveva assegnato "altro" a questo prodotto, ma il nome
+  // contiene "uova" → deve vincere latticini, non il fallback generico.
+  assert.strictEqual(inferCategory('COCCODI UOVA ANTIOBI'), 'latticini');
+  assert.strictEqual(inferCategory('Uova fresche 6 pz'), 'latticini');
+});
+
 test('VALID_CATEGORIES: contiene le chiavi enum del backend', () => {
   for (const cat of ['frutta_verdura', 'carne_pesce', 'pane_pasta', 'dolci_snack', 'dispensa', 'igiene_casa', 'altro']) {
     assert.ok(VALID_CATEGORIES.has(cat), `manca ${cat}`);

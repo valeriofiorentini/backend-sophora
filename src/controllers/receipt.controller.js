@@ -19,6 +19,7 @@ const { populatePantryFromReceipt, VALID_CATEGORIES } = require('../services/pan
 const {
   cleanStr, cleanDate, clampQuantity, clampPrice, clampPercent, normalizeProductKey,
 } = require('../utils/sanitize');
+const { canonicalizeChain } = require('../utils/storeChain');
 
 // ─── Tipi MIME accettati ───────────────────────────────────────────────────────
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
@@ -74,7 +75,9 @@ async function scanReceipt(req, res) {
 
   // 3b. SANITIZE: l'OCR a volte restituisce la stringa "null"/"N/A" o date non valide.
   parsed.storeName     = cleanStr(parsed.storeName);
-  parsed.storeChain    = cleanStr(parsed.storeChain);
+  // canonicalizeChain: riconduce varianti (IPER COOP/Ipercoop/EXTRACOOP…) a
+  // una forma unica → niente più catene duplicate a valle (offerte, statistiche).
+  parsed.storeChain    = canonicalizeChain(cleanStr(parsed.storeChain));
   parsed.storeAddress  = cleanStr(parsed.storeAddress);
   parsed.paymentMethod = cleanStr(parsed.paymentMethod);
   parsed.receiptDate   = cleanDate(parsed.receiptDate);

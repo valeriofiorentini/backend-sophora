@@ -2,6 +2,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const cron = require('node-cron');
 const prisma = require('../config/database');
+const { canonicalizeChain } = require('../utils/storeChain');
 
 // ─── Lidl Italy ──────────────────────────────────────────────────────────────
 // Lidl exposes a JSON feed for their current offers
@@ -116,6 +117,7 @@ async function scrapeConad() {
 
 // ─── Save to DB + PriceHistory ───────────────────────────────────────────────
 async function savePromos(items, storeChain, storeName) {
+  storeChain = canonicalizeChain(storeChain); // forma canonica catena (anti-duplicati)
   let count = 0;
   for (const item of items) {
     try {

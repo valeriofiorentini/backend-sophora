@@ -14,6 +14,7 @@
 const prisma = require('../config/database');
 const { sendMulticast } = require('./push.service');
 const { haversineKm, bboxWhere } = require('./geo.service');
+const { canonicalizeChain } = require('../utils/storeChain');
 const OpenAI = require('openai');
 
 const openai = new OpenAI({
@@ -151,7 +152,7 @@ async function processDiscountPost({ feedId, userId, storeName, description, sto
     await withRetry(() => prisma.promo.create({
       data: {
         storeName:   resolvedStore,
-        storeChain:  meta.storeName || storeName || null,
+        storeChain:  canonicalizeChain(meta.storeName || storeName || null),
         productName: resolvedProduct,
         imageUrl:    firstImage || null,
         source:      'community',

@@ -1,6 +1,7 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { haversineKm: haversine, bboxWhere } = require('../services/geo.service');
+const { serializeProduct } = require('../utils/money');
 
 async function getStoresByLocation(req, res) {
   const { a, latitude, longitude, radius = 10, filter } = req.query;
@@ -46,6 +47,10 @@ async function getStoreById(req, res) {
     include: { products: { take: 20 } },
   });
   if (!store) return error(res, 'Negozio non trovato', 404);
+
+  // Serializza i prezzi Decimal dei prodotti reali → Number (i virtuali/promo
+  // sono già numeri; serializeProduct è idempotente su questi).
+  store = { ...store, products: (store.products || []).map(serializeProduct) };
 
   if (store.chain) {
     const virtualProducts = await getChainProductsFromHistory(store.chain);
@@ -108,7 +113,7 @@ async function getNearbyStoresForProduct(req, res) {
   });
 
   let results = sameProducts.map(p => ({
-    product: p,
+    product: serializeProduct(p),
     store: p.store,
     distance: latitude_ && longitude_
       ? haversine(parseFloat(latitude_), parseFloat(longitude_), p.store.latitude, p.store.longitude)

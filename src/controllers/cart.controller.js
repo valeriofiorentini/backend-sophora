@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
+const { toNum, serializeProduct } = require('../utils/money');
 
 async function getCart(req, res) {
   const items = await prisma.cartItem.findMany({
@@ -9,11 +10,14 @@ async function getCart(req, res) {
   });
 
   const total = items.reduce((sum, item) => {
-    const price = item.product.discountedPrice ?? item.product.price;
+    const price = toNum(item.product.discountedPrice ?? item.product.price);
     return sum + price * item.quantity;
   }, 0);
 
-  return success(res, { items, total: parseFloat(total.toFixed(2)) });
+  // Serializza i prezzi Decimal→Number prima di inviare (il client fa aritmetica)
+  const serialized = items.map(item => ({ ...item, product: serializeProduct(item.product) }));
+
+  return success(res, { items: serialized, total: parseFloat(total.toFixed(2)) });
 }
 
 // Valida quantity: intero tra 1 e 999
@@ -40,7 +44,7 @@ async function addToCart(req, res) {
     include: { product: true },
   });
 
-  return success(res, { item }, 201);
+  return success(res, { item: { ...item, product: serializeProduct(item.product) } }, 201);
 }
 
 async function updateCartItem(req, res) {
@@ -68,7 +72,7 @@ async function updateCartItem(req, res) {
     include: { product: true },
   });
 
-  return success(res, { item });
+  return success(res, { item: { ...item, product: serializeProduct(item.product) } });
 }
 
 async function removeFromCart(req, res) {

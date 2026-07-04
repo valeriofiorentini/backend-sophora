@@ -150,8 +150,8 @@ model Product {
   image           String?
   category        String?
   storeId         String
-  price           Float
-  discountedPrice Float?
+  price           Decimal  @db.Decimal(10, 2) // denaro: Decimal, non Float
+  discountedPrice Decimal? @db.Decimal(10, 2)
   isOnSale        Boolean  @default(false)
   saleEndsAt      DateTime?
   createdAt       DateTime @default(now())

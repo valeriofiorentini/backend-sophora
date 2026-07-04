@@ -1,6 +1,7 @@
 const prisma = require('../config/database');
 const axios = require('axios');
 const { success, error } = require('../utils/response');
+const { serializeProduct } = require('../utils/money');
 
 async function getProductsByStore(req, res) {
   const { storeId } = req.params;
@@ -67,7 +68,7 @@ async function getProductsByStore(req, res) {
     products = mergedList;
   }
 
-  return success(res, { products });
+  return success(res, { products: products.map(serializeProduct) });
 }
 
 async function getProductById(req, res) {
@@ -76,7 +77,7 @@ async function getProductById(req, res) {
     include: { store: true },
   });
   if (!product) return error(res, 'Prodotto non trovato', 404);
-  return success(res, { product });
+  return success(res, { product: serializeProduct(product) });
 }
 
 async function getProductByBarcode(req, res) {
@@ -89,7 +90,7 @@ async function getProductByBarcode(req, res) {
   });
 
   if (localProducts.length > 0) {
-    return success(res, { products: localProducts, source: 'local' });
+    return success(res, { products: localProducts.map(serializeProduct), source: 'local' });
   }
 
   // Fallback: Open Food Facts (free, no key required)

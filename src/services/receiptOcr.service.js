@@ -171,6 +171,24 @@ function reassembleReceiptLines(text) {
   return out.join('\n');
 }
 
+// Verifica somma netta item vs totalAmount (usata sia dalla pipeline ibrida che
+// da quella vision pura): se la discrepanza supera il 5%, l'LLM ha quasi certamente
+// letto male un prezzo o saltato una riga — serve un secondo giro di controllo.
+function sumMismatch(parsed) {
+  if (!parsed) return true;
+  const items = Array.isArray(parsed.items) ? parsed.items : [];
+  const sumItems = items.reduce((acc, i) =>
+    acc + (parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0), 0);
+  const total = parseFloat(parsed.totalAmount) || 0;
+  if (total <= 0 || items.length === 0) return false;
+  const diff = Math.abs(sumItems - total) / total;
+  if (diff > 0.05) {
+    console.warn(`[receipt] somma netta item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}%`);
+    return true;
+  }
+  return false;
+}
+
 // Pipeline ibrida: OCR testo → testo+immagine all'LLM. Ritorna il JSON parsato,
 // o null se il provider è "vision" oppure OCR non disponibile.
 async function tryOcrSpacePipeline(imageBase64) {
@@ -225,13 +243,31 @@ ${text}
   }];
 
   try {
-    let resp;
+    let resp, model;
     try {
       resp = await callOcrApi(OCR_MODEL_ACCURATE, messages);
+      model = OCR_MODEL_ACCURATE;
     } catch {
       resp = await callOcrApi(OCR_MODEL_FALLBACK, messages);
+      model = OCR_MODEL_FALLBACK;
     }
-    return parseOcrJson(resp.choices[0].message.content);
+    let rawContent = resp.choices[0].message.content;
+    let parsed = parseOcrJson(rawContent);
+
+    // Stesso controllo somma-vs-totale della pipeline vision pura: se non torna,
+    // richiedi un secondo parere (modello diverso) prima di accettare il risultato.
+    if (sumMismatch(parsed)) {
+      const fallbackModel = model === OCR_MODEL_FALLBACK ? OCR_MODEL_ACCURATE : OCR_MODEL_FALLBACK;
+      console.warn(`[receipt] pipeline ibrida: somma non torna → secondo parere ${fallbackModel}`);
+      const fallbackResp = await callOcrApi(fallbackModel, [
+        ...messages,
+        { role: 'assistant', content: rawContent },
+        { role: 'user', content: 'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto oppure hai letto male un prezzo nella colonna PREZZO(€) (occhio a cifre confondibili come 9/6, 8/6, 1/4). Rileggi TUTTE le righe usando sia il testo OCR che l\'immagine, e restituisci il JSON corretto e completo.' },
+      ]);
+      const fallbackParsed = parseOcrJson(fallbackResp.choices[0].message.content);
+      if (fallbackParsed) parsed = fallbackParsed;
+    }
+    return parsed;
   } catch (e) {
     console.warn('[receipt] pipeline ibrida fallita → fallback vision puro:', e.message);
     return null;
@@ -278,19 +314,7 @@ async function runReceiptOcr(imageBase64) {
   }
 
   // Validazione somma NETTA item vs totalAmount: discrepanza >5% o JSON rotto → secondo parere
-  const needsFallback = !parsedFirst || (() => {
-    const items = Array.isArray(parsedFirst.items) ? parsedFirst.items : [];
-    const sumItems = items.reduce((acc, i) =>
-      acc + (parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0), 0);
-    const total = parseFloat(parsedFirst.totalAmount) || 0;
-    if (total <= 0 || items.length === 0) return false;
-    const diff = Math.abs(sumItems - total) / total;
-    if (diff > 0.05) {
-      console.warn(`[receipt] somma netta item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}% → fallback ${OCR_MODEL_FALLBACK}`);
-      return true;
-    }
-    return false;
-  })();
+  const needsFallback = sumMismatch(parsedFirst);
 
   if (needsFallback) {
     console.warn(`[receipt] fallback a ${OCR_MODEL_FALLBACK}`);

@@ -70,7 +70,9 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 5b. NESSUN PRODOTTO SALTATO: Conta le righe prodotto sullo scontrino e verifica che l'array "items" abbia lo stesso numero di elementi. Se una riga ha un prezzo valido e non è un subtotale/IVA, deve essere inclusa.
 
-5c. VERIFICA TOTALE — CONTROLLO FINALE: Dopo aver estratto tutti gli item, somma mentalmente i loro totalPrice (al netto degli sconti per articolo). Il risultato deve avvicinarsi al totalAmount dello scontrino (±0,10€ per arrotondamenti IVA). Se la somma si discosta di più, significa che hai letto male qualche prezzo — riesamina le righe con cifre ambigue (es. 8 vs 6, 0 vs 6, 1 vs 4) e correggile prima di rispondere.
+5c. VERIFICA TOTALE — CONTROLLO FINALE: Dopo aver estratto tutti gli item, somma mentalmente i loro totalPrice (al netto degli sconti per articolo). Il risultato deve avvicinarsi al totalAmount dello scontrino (±0,10€ per arrotondamenti IVA). Se la somma si discosta di più, significa che hai letto male qualche prezzo — riesamina le righe con cifre ambigue (es. 9 vs 6, 8 vs 6, 0 vs 6, 1 vs 4, 3 vs 8) e correggile PRIMA di rispondere. Questo controllo NON è opzionale: fallo sempre, anche se ti sembra di aver letto bene, perché è l'unico modo per accorgersi di una cifra scambiata senza rileggere ogni riga una per una.
+
+5d. CIFRE FACILMENTE CONFUSE — attenzione especiale a "9" vs "6": sulla carta termica dei prezzi stampati, il 9 e il 6 sono la stessa forma capovolta e si scambiano facilmente, specialmente su foto storte, sfocate o con poca luce. Prima di scrivere un prezzo con un 9 o un 6, guarda se l'anello della cifra si chiude in alto (9) o in basso (6). In caso di dubbio, preferisci il valore che rende la somma degli item più vicina al totalAmount dello scontrino (vedi regola 5c) — il totale stampato è sempre più affidabile della singola cifra ambigua.
 
 6. FOTO SFOCATA O PARZIALE: Se un valore non è leggibile usa null. Non inventare prezzi.
 

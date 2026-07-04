@@ -21,6 +21,7 @@ const OpenAI  = require('openai');
 const prisma  = require('../config/database');
 const { uploadToS3 } = require('../config/s3');
 const { success, error } = require('../utils/response');
+const { normalizeName, findSimilarKey } = require('../services/pantrySync.service');
 
 const openai = new OpenAI({
   apiKey:  process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
@@ -299,6 +300,46 @@ async function clearPantry(req, res) {
   return success(res, { message: `Dispensa svuotata (${count} prodotti rimossi)` });
 }
 
+// ─── POST /api/pantry/dedupe ──────────────────────────────────────────────────
+// Pulizia una tantum dei duplicati già esistenti in dispensa (creati prima
+// che populatePantryFromReceipt normalizzasse i nomi) — stessa logica di
+// dedup usata per le nuove scansioni, applicata retroattivamente: raggruppa
+// per nome normalizzato/simile, somma le quantità, tiene il più vecchio.
+async function dedupePantry(req, res) {
+  const items = await prisma.pantryItem.findMany({
+    where: { userId: req.userId },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const groups = new Map(); // normalizedKey -> [items in ordine di creazione]
+  for (const item of items) {
+    let key = normalizeName(item.name || '');
+    const similar = findSimilarKey(key, groups.keys());
+    if (similar) key = similar;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+
+  const ops = [];
+  let merged = 0;
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    const [keep, ...dupes] = group;
+    const totalQuantity = group.reduce((sum, it) => sum + (it.quantity || 0), 0);
+    ops.push(prisma.pantryItem.update({
+      where: { id: keep.id },
+      data:  { quantity: totalQuantity },
+    }));
+    ops.push(prisma.pantryItem.deleteMany({
+      where: { id: { in: dupes.map(d => d.id) } },
+    }));
+    merged += dupes.length;
+  }
+
+  if (ops.length > 0) await prisma.$transaction(ops);
+  return success(res, { message: `${merged} duplicati uniti`, merged });
+}
+
 // ─── POST /api/pantry/recipes ─────────────────────────────────────────────────
 async function suggestRecipes(req, res) {
   const { people = 2, mealType = 'pranzo o cena', dietNotes = '' } = req.body;
@@ -457,6 +498,7 @@ module.exports = {
   updateItem,
   deleteItem,
   clearPantry,
+  dedupePantry,
   suggestRecipes,
   generateShoppingList,
 };

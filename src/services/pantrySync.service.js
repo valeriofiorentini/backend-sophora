@@ -191,4 +191,7 @@ async function populatePantryFromReceipt(userId, items, receiptId) {
   if (ops.length > 0) await prisma.$transaction(ops);
 }
 
-module.exports = { populatePantryFromReceipt, isNonPantryItem, inferCategory, VALID_CATEGORIES };
+module.exports = {
+  populatePantryFromReceipt, isNonPantryItem, inferCategory, VALID_CATEGORIES,
+  normalizeName, findSimilarKey,
+};

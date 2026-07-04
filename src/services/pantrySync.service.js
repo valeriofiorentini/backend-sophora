@@ -17,6 +17,47 @@ function isNonPantryItem(name) {
   return blacklist.some(w => n.includes(w));
 }
 
+// Normalizza un nome prodotto per il confronto: la stessa cosa scansionata su
+// scontrini diversi arriva spesso con punteggiatura/spaziatura diverse (es.
+// "CONS.SUCCO LIM.200ML" vs "Cons Succo Lim. 200ml") — senza normalizzare
+// finiscono come voci separate in dispensa invece di sommare la quantità.
+function normalizeName(name) {
+  return name
+    .toLowerCase()
+    .replace(/[.,;:/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Distanza di Levenshtein, usata solo per un ultimo controllo di somiglianza
+// (es. "NESCAFE GINSENG X 10" vs "Nescafe Ginseng A 10": un singolo carattere
+// letto male dall'OCR, stessa famiglia di errori delle cifre confuse 9/6).
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return Math.max(m, n); // troppo diverse in lunghezza
+  const dp = Array.from({length: m + 1}, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// Trova, tra le chiavi esistenti, la più simile a `key` (distanza <= 1 e solo
+// per nomi abbastanza lunghi, per evitare falsi positivi su parole corte).
+function findSimilarKey(key, existingKeys) {
+  if (key.length < 10) return null;
+  for (const k of existingKeys) {
+    if (k === key) continue;
+    if (levenshtein(key, k) <= 1) return k;
+  }
+  return null;
+}
+
 // Categorie valide per la dispensa (devono combaciare col frontend pantryScanner)
 const VALID_CATEGORIES = new Set([
   'frutta_verdura', 'carne_pesce', 'latticini', 'pane_pasta', 'bevande',
@@ -79,13 +120,17 @@ function inferCategory(name) {
  * mancanti (prima OCR incompleta) vengono aggiunti.
  */
 async function populatePantryFromReceipt(userId, items, receiptId) {
-  // 1. Aggrega gli item dello scontrino per nome normalizzato (lowercase)
+  // 1. Aggrega gli item dello scontrino per nome normalizzato (punteggiatura/spazi
+  // ignorati, non solo case) — evita che "CONS.SUCCO LIM.200ML" e "Cons Succo
+  // Lim. 200ml" diventino due voci distinte invece di sommare la quantità.
   const byKey = new Map();
   for (const item of items) {
     const name = (item.name || item.rawName || '').trim();
     if (!name) continue;
     if (isNonPantryItem(name)) continue;
-    const key = name.toLowerCase();
+    let key = normalizeName(name);
+    const similar = findSimilarKey(key, byKey.keys());
+    if (similar) key = similar; // stesso prodotto, un carattere letto diverso
     const qty = clampQuantity(item.quantity);
     if (byKey.has(key)) {
       byKey.get(key).quantity += qty;
@@ -100,13 +145,17 @@ async function populatePantryFromReceipt(userId, items, receiptId) {
     where:  { userId },
     select: { id: true, name: true, quantity: true, sourceReceiptId: true },
   });
-  const existingByKey = new Map(existing.map(e => [e.name.trim().toLowerCase(), e]));
+  const existingByKey = new Map(existing.map(e => [normalizeName(e.name.trim()), e]));
 
   const toCreate = [];
   const updates  = [];
   const now      = new Date();
 
-  for (const [key, data] of byKey) {
+  for (let [key, data] of byKey) {
+    if (!existingByKey.has(key)) {
+      const similar = findSimilarKey(key, existingByKey.keys());
+      if (similar) key = similar;
+    }
     const match = existingByKey.get(key);
 
     if (match) {

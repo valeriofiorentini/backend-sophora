@@ -138,6 +138,18 @@ const PORT   = parseInt(process.env.PORT, 10) || 3000;
 const server = app.listen(PORT, () => {
   console.log(`✅ Shopora API avviato — porta ${PORT} [${process.env.NODE_ENV ?? 'development'}]`);
 
+  // Aggiorna la lingua a 'it' per tutti gli utenti esistenti che hanno 'en' come default
+  prisma.user.updateMany({
+    where: { language: 'en' },
+    data: { language: 'it' }
+  }).then(res => {
+    if (res.count > 0) {
+      console.log(`[Startup] Aggiornata lingua a 'it' per ${res.count} utenti.`);
+    }
+  }).catch(err => {
+    console.error('[Startup] Errore migrazione lingua:', err.message);
+  });
+
   if (process.env.NODE_ENV === 'production') {
     startScheduler();
   }

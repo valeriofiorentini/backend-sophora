@@ -2,9 +2,10 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../config/database');
 const { error } = require('../utils/response');
 
-// Cache esistenza utente: evita una query DB a ogni richiesta autenticata.
-// TTL 60s = un account eliminato può usare il token ancora per max 1 minuto.
-const existsCache = new Map(); // userId → scadenza cache (ms epoch)
+// Cache esistenza + ruolo utente: evita una query DB a ogni richiesta
+// autenticata. TTL 60s = un account eliminato (o promosso/declassato admin)
+// riflette il cambiamento entro max 1 minuto.
+const existsCache = new Map(); // userId → { until: ms epoch, isAdmin: bool }
 const EXISTS_TTL_MS = 60_000;
 
 /** Da chiamare quando un utente viene eliminato (delete-account). */
@@ -27,25 +28,31 @@ async function auth(req, res, next) {
   }
 
   // Il token è firmato ma l'account potrebbe non esistere più
-  // (eliminato, o DB resettato): verifica con cache breve.
+  // (eliminato, o DB resettato): verifica con cache breve. La cache tiene
+  // anche isAdmin così adminOnly può fidarsi di req.isAdmin senza query extra.
+  let isAdmin = false;
   try {
     const now = Date.now();
-    const cachedUntil = existsCache.get(payload.userId);
-    if (!cachedUntil || cachedUntil < now) {
+    const cached = existsCache.get(payload.userId);
+    if (cached && cached.until >= now) {
+      isAdmin = cached.isAdmin;
+    } else {
       const user = await prisma.user.findUnique({
         where:  { id: payload.userId },
-        select: { id: true },
+        select: { id: true, isAdmin: true },
       });
       if (!user) return error(res, 'Account non trovato', 401);
+      isAdmin = user.isAdmin === true;
       // Evita crescita illimitata della cache
       if (existsCache.size > 10_000) existsCache.clear();
-      existsCache.set(payload.userId, now + EXISTS_TTL_MS);
+      existsCache.set(payload.userId, { until: now + EXISTS_TTL_MS, isAdmin });
     }
   } catch (e) {
     return next(e); // errore DB → 500 dal error handler
   }
 
   req.userId = payload.userId;
+  req.isAdmin = isAdmin;
   next();
 }
 

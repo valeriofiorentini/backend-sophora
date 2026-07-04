@@ -65,6 +65,7 @@ model User {
   isVerified          Boolean   @default(false)
   isSubscribed        Boolean   @default(false)
   isProfileCompleted  Boolean   @default(false)
+  isAdmin             Boolean   @default(false) // gating route admin (oltre a ADMIN_API_KEY)
   monthlyBudget  Float?
   yearlyBudget   Float?
   deviceToken    String?

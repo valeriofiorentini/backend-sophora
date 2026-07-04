@@ -256,6 +256,11 @@ model Feed {
   createdAt     DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // userId: controlli di proprietà (delete/update post) e post di un utente.
+  // createdAt: la lista community ordina sempre per createdAt desc.
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model Favourite {

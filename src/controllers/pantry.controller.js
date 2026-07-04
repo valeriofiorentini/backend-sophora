@@ -22,6 +22,7 @@ const prisma  = require('../config/database');
 const { uploadToS3 } = require('../config/s3');
 const { success, error } = require('../utils/response');
 const { normalizeName, findSimilarKey } = require('../services/pantrySync.service');
+const { langName } = require('../utils/lang');
 
 const openai = new OpenAI({
   apiKey:  process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
@@ -33,17 +34,10 @@ const OR = !!process.env.OPENROUTER_API_KEY;
 const MODEL_VISION = OR ? 'openai/gpt-4o'      : 'gpt-4o';
 const MODEL_FAST   = OR ? 'openai/gpt-4o-mini' : 'gpt-4o-mini';
 
-// Lingua di output AI: segue User.language
-const LANG_NAMES = {
-  it: 'italiano',
-  en: 'inglese (English)',
-  fr: 'francese (français)',
-  es: 'spagnolo (español)',
-  de: 'tedesco (Deutsch)',
-};
+// Lingua di output AI: segue User.language.
+// LANG_NAMES centralizzata in utils/lang (condivisa con chat.controller).
 function langInstruction(code) {
-  const name = LANG_NAMES[code] ?? LANG_NAMES.it;
-  return `Scrivi nomi, istruzioni e consigli SEMPRE in ${name}.`;
+  return `Scrivi nomi, istruzioni e consigli SEMPRE in ${langName(code)}.`;
 }
 
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);

@@ -61,9 +61,20 @@ app.use((_req, res, next) => {
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // In produzione, limitare alle origini note (set ALLOWED_ORIGINS nel .env)
 // Es: ALLOWED_ORIGINS=https://shopora.com
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : true; // sviluppo: accetta tutto
+// Fail-safe: se in produzione la variabile non è settata NON si apre a tutti
+// (un deploy mal configurato resta ristretto, non diventa CORS aperto a chiunque).
+// L'app mobile usa client HTTP nativi che non applicano CORS, quindi restringere
+// non la impatta: protegge solo l'accesso da browser/dashboard web.
+const isProduction = process.env.NODE_ENV === 'production';
+let allowedOrigins;
+if (process.env.ALLOWED_ORIGINS) {
+  allowedOrigins = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim());
+} else if (isProduction) {
+  console.warn('[cors] ALLOWED_ORIGINS non impostata in produzione → CORS ristretto. Imposta ALLOWED_ORIGINS nel .env per abilitare le origini browser note.');
+  allowedOrigins = false; // nega le richieste cross-origin da browser
+} else {
+  allowedOrigins = true;  // sviluppo: accetta tutto
+}
 
 app.use(cors({
   origin:      allowedOrigins,

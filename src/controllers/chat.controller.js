@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { checkChatLimit } = require('../utils/planLimits');
+const { langName } = require('../utils/lang');
 
 const openai = new OpenAI({
   apiKey:  process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY,
@@ -28,17 +29,10 @@ Se generi una lista spesa strutturata, incluila SEMPRE in questo formato tra tag
 
 Sii conciso e pratico. Non inventare prezzi precisi, usa stime ragionevoli.`;
 
-// Lingua di risposta: segue User.language (impostata dall'app)
-const LANG_NAMES = {
-  it: 'italiano',
-  en: 'inglese (English)',
-  fr: 'francese (français)',
-  es: 'spagnolo (español)',
-  de: 'tedesco (Deutsch)',
-};
+// Lingua di risposta: segue User.language (impostata dall'app).
+// LANG_NAMES centralizzata in utils/lang (condivisa con pantry.controller).
 function langInstruction(code) {
-  const name = LANG_NAMES[code] ?? LANG_NAMES.it;
-  return `\nRispondi SEMPRE in ${name}, indipendentemente dalla lingua del messaggio.`;
+  return `\nRispondi SEMPRE in ${langName(code)}, indipendentemente dalla lingua del messaggio.`;
 }
 
 const SESSION_MAX = 50; // max sessioni per utente
@@ -185,16 +179,18 @@ async function sendMessage(req, res) {
       }
     }
 
-    // Save assistant message
-    const assistantMsg = await prisma.chatMessage.create({
-      data: { sessionId: session.id, role: 'assistant', content: fullResponse, metadata },
-    });
-
-    // Update session timestamp
-    await prisma.chatSession.update({
-      where: { id: session.id },
-      data: { updatedAt: new Date() },
-    });
+    // Salva il messaggio assistant e aggiorna il timestamp sessione in
+    // un'unica transazione: due scritture correlate, o entrambe o nessuna
+    // (evita sessioni con updatedAt stantìo se un write fallisce a metà).
+    const [assistantMsg] = await prisma.$transaction([
+      prisma.chatMessage.create({
+        data: { sessionId: session.id, role: 'assistant', content: fullResponse, metadata },
+      }),
+      prisma.chatSession.update({
+        where: { id: session.id },
+        data: { updatedAt: new Date() },
+      }),
+    ]);
 
     res.write(`data: ${JSON.stringify({ type: 'done', sessionId: session.id, messageId: assistantMsg.id, metadata })}\n\n`);
   } catch (err) {

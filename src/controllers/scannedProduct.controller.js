@@ -306,18 +306,33 @@ function generateReportHtml(report, userId) {
 // "primo scontrino" anni prima che l'utente abbia mai usato l'app. processedAt
 // è generato dal server al momento dell'upload ed è sempre affidabile: se
 // receiptDate si discosta troppo da processedAt (più di 60 giorni prima, o
-// nel futuro), è quasi certamente un errore di lettura e va scartata.
+// nel futuro), è quasi certamente un errore sull'ANNO — è raro scansionare
+// uno scontrino vecchio di anni. Invece di scartare mese/giorno (informazione
+// comunque utile), si tenta prima la correzione più probabile: stesso
+// mese/giorno ma con l'anno di processedAt.
 const RECEIPT_DATE_MAX_DAYS_BEFORE_UPLOAD = 60;
 function plausibleReceiptDate(receiptDate, processedAt) {
   if (!receiptDate) return null;
-  const rd = new Date(receiptDate).getTime();
-  if (isNaN(rd)) return null;
-  if (processedAt) {
-    const pa = new Date(processedAt).getTime();
-    const daysBefore = (pa - rd) / (1000 * 60 * 60 * 24);
-    if (daysBefore > RECEIPT_DATE_MAX_DAYS_BEFORE_UPLOAD || daysBefore < -1) return null;
+  const rd = new Date(receiptDate);
+  if (isNaN(rd.getTime())) return null;
+  if (!processedAt) return receiptDate;
+
+  const pa = new Date(processedAt);
+  const daysBefore = (pa.getTime() - rd.getTime()) / (1000 * 60 * 60 * 24);
+  if (daysBefore <= RECEIPT_DATE_MAX_DAYS_BEFORE_UPLOAD && daysBefore >= -1) {
+    return receiptDate; // già plausibile così com'è
   }
-  return receiptDate;
+
+  // Anno probabilmente letto male: riprova con l'anno di processedAt,
+  // mantenendo mese/giorno originali dello scontrino.
+  const corrected = new Date(rd);
+  corrected.setFullYear(pa.getFullYear());
+  const correctedDaysBefore = (pa.getTime() - corrected.getTime()) / (1000 * 60 * 60 * 24);
+  if (correctedDaysBefore <= RECEIPT_DATE_MAX_DAYS_BEFORE_UPLOAD && correctedDaysBefore >= -1) {
+    return corrected;
+  }
+
+  return null; // nessuna correzione plausibile: meglio scartarla del tutto
 }
 
 async function getFirstActivityDate(req, res) {

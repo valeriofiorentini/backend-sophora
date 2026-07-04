@@ -31,6 +31,7 @@ router.post('/items',    validate(pantryItemSchema),   asyncHandler(c.addItem));
 router.put('/:id',       validate(pantryUpdateSchema), asyncHandler(c.updateItem));
 router.delete('/clear',  asyncHandler(c.clearPantry));   // prima di /:id
 router.post('/dedupe',   asyncHandler(c.dedupePantry));  // unisce duplicati esistenti
+router.post('/bulk-delete', asyncHandler(c.bulkDeleteItems)); // elimina più id insieme
 router.delete('/:id',    asyncHandler(c.deleteItem));
 
 // AI

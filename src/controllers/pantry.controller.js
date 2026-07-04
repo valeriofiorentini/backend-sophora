@@ -294,6 +294,21 @@ async function deleteItem(req, res) {
   return success(res, { message: 'Prodotto rimosso' });
 }
 
+// ─── POST /api/pantry/bulk-delete ─────────────────────────────────────────────
+// Elimina più prodotti in un colpo solo (selezione multipla / per categoria /
+// tutti) — con decine di prodotti in dispensa, eliminarli uno alla volta non
+// è praticabile.
+async function bulkDeleteItems(req, res) {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return error(res, 'Nessun prodotto selezionato', 400);
+  }
+  const { count } = await prisma.pantryItem.deleteMany({
+    where: { id: { in: ids }, userId: req.userId },
+  });
+  return success(res, { message: `${count} prodotti rimossi`, count });
+}
+
 // ─── DELETE /api/pantry ───────────────────────────────────────────────────────
 async function clearPantry(req, res) {
   const { count } = await prisma.pantryItem.deleteMany({ where: { userId: req.userId } });
@@ -497,6 +512,7 @@ module.exports = {
   addItem,
   updateItem,
   deleteItem,
+  bulkDeleteItems,
   clearPantry,
   dedupePantry,
   suggestRecipes,

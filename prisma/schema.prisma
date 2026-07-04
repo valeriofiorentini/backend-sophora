@@ -134,8 +134,9 @@ model Store {
   rating    Float?  @default(0)
   createdAt DateTime @default(now())
 
-  products   Product[]
-  favourites Favourite[]
+  products        Product[]
+  favourites      Favourite[]
+  scannedProducts ScannedProduct[]
 
   // Indice per il bounding box (negozio più vicino della catena)
   @@index([latitude, longitude])
@@ -234,11 +235,13 @@ model ScannedProduct {
   name          String
   price         Float
   quantity      Int      @default(1)
-  storeId       String?
+  storeId       String?  // FK opzionale verso Store (id valido o null)
+  storeName     String?  // nome negozio libero (scansioni senza id Store)
   timestamp     DateTime @default(now())
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   group Group? @relation(fields: [groupId], references: [id])
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([timestamp])

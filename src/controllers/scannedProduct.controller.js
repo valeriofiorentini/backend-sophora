@@ -11,12 +11,17 @@ async function create(req, res) {
   const finalName = name || productName;
   if (!finalName || price === undefined) return error(res, 'name e price obbligatori');
 
-  const finalStore = storeId || storeName;
+  // storeId è ora una FK verso Store: accetta SOLO un id Store valido, altrimenti
+  // null. Il nome negozio va nel campo dedicato storeName (prima finiva per
+  // errore in storeId, impedendo la FK).
+  let validStoreId = null;
+  if (storeId) {
+    const exists = await prisma.store.findUnique({ where: { id: storeId }, select: { id: true } });
+    if (exists) validStoreId = storeId;
+  }
 
   // Arrotonda a 2 decimali alla scrittura: evita di persistere valori con
   // deriva float (es. 28.129999999999992) che poi si propagano nelle somme.
-  // (Migrazione piena a Decimal rimandata: cambierebbe il tipo di price in
-  //  ogni risposta API + aritmetica backend — vedi nota nel commit.)
   const roundedPrice = Math.round((parseFloat(price) || 0) * 100) / 100;
 
   const sp = await prisma.scannedProduct.create({
@@ -26,7 +31,8 @@ async function create(req, res) {
       name: finalName,
       price: roundedPrice,
       quantity: parseInt(quantity),
-      storeId: finalStore,
+      storeId: validStoreId,
+      storeName: storeName || null,
       groupId,
       groupMemberId,
     },
@@ -86,8 +92,8 @@ async function getMergedProductsAndReceipts(userId, startDate, endDate) {
     productName: item.name, // Frontend compatibility
     price: item.price,
     quantity: item.quantity,
-    storeId: item.storeId || 'Altro',
-    storeName: item.storeId || 'Altro', // Frontend compatibility
+    storeId: item.storeId || null,
+    storeName: item.storeName || 'Altro', // nome dal campo dedicato (non più da storeId)
     timestamp: item.timestamp,
     createdAt: item.timestamp, // Frontend compatibility
     category: 'Scansionati',

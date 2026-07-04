@@ -1,10 +1,11 @@
 const router = require('express').Router();
 const c = require('../controllers/store.controller');
 const { auth } = require('../middleware/auth');
+const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(auth);
-router.get('/location', c.getStoresByLocation);
-router.get('/nearByStores/:productId', c.getNearbyStoresForProduct);
-router.get('/:storeId', c.getStoreById);
+router.get('/location', asyncHandler(c.getStoresByLocation));
+router.get('/nearByStores/:productId', asyncHandler(c.getNearbyStoresForProduct));
+router.get('/:storeId', asyncHandler(c.getStoreById));
 
 module.exports = router;

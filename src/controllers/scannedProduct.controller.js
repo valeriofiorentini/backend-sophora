@@ -300,6 +300,26 @@ function generateReportHtml(report, userId) {
 // confronto storico, invece di generare sempre i 12 mesi dell'anno corrente
 // (che mostrerebbero "€0" ingannevoli per i mesi prima che l'utente iniziasse
 // a usare l'app).
+// receiptDate viene letta dall'OCR su un formato scontrino spesso ambiguo
+// (GG/MM/AA): un anno letto male (es. "26" scambiato per "24", stessa
+// famiglia di errori di lettura cifre dei prezzi) farebbe apparire un falso
+// "primo scontrino" anni prima che l'utente abbia mai usato l'app. processedAt
+// è generato dal server al momento dell'upload ed è sempre affidabile: se
+// receiptDate si discosta troppo da processedAt (più di 60 giorni prima, o
+// nel futuro), è quasi certamente un errore di lettura e va scartata.
+const RECEIPT_DATE_MAX_DAYS_BEFORE_UPLOAD = 60;
+function plausibleReceiptDate(receiptDate, processedAt) {
+  if (!receiptDate) return null;
+  const rd = new Date(receiptDate).getTime();
+  if (isNaN(rd)) return null;
+  if (processedAt) {
+    const pa = new Date(processedAt).getTime();
+    const daysBefore = (pa - rd) / (1000 * 60 * 60 * 24);
+    if (daysBefore > RECEIPT_DATE_MAX_DAYS_BEFORE_UPLOAD || daysBefore < -1) return null;
+  }
+  return receiptDate;
+}
+
 async function getFirstActivityDate(req, res) {
   const [firstReceipt, firstScan] = await Promise.all([
     prisma.receipt.findFirst({
@@ -315,7 +335,7 @@ async function getFirstActivityDate(req, res) {
   ]);
 
   const dates = [
-    firstReceipt?.receiptDate,
+    plausibleReceiptDate(firstReceipt?.receiptDate, firstReceipt?.processedAt),
     firstReceipt?.processedAt,
     firstScan?.timestamp,
   ].filter(Boolean);

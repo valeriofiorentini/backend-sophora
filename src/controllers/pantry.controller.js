@@ -21,7 +21,7 @@ const OpenAI  = require('openai');
 const prisma  = require('../config/database');
 const { uploadToS3 } = require('../config/s3');
 const { success, error } = require('../utils/response');
-const { normalizeName, findSimilarKey } = require('../services/pantrySync.service');
+const { normalizeName, findSimilarKey, NON_EDIBLE_CATEGORIES } = require('../services/pantrySync.service');
 const { PANTRY_SCAN_PROMPT, buildRecipesPrompt, buildShoppingPrompt } = require('../prompts/pantry.prompts');
 
 const openai = new OpenAI({
@@ -316,10 +316,12 @@ async function suggestRecipes(req, res) {
   if (customIngredients && customIngredients.length > 0) {
     pantryList = customIngredients.map(name => `- ${name.trim()}`).join('\n');
   } else {
-    const items = await prisma.pantryItem.findMany({
+    // Cibo per animali, stoviglie monouso ecc. (category igiene_casa/non_alimentare)
+    // non sono ingredienti: non vanno mai proposti in una ricetta.
+    const items = (await prisma.pantryItem.findMany({
       where:   { userId: req.userId },
       orderBy: { expiresAt: 'asc' }, // prima le cose in scadenza
-    });
+    })).filter(i => !NON_EDIBLE_CATEGORIES.has(i.category));
 
     if (items.length === 0) {
       return error(res, 'La dispensa è vuota. Aggiungi prodotti prima di chiedere ricette.');
@@ -372,7 +374,8 @@ async function suggestRecipes(req, res) {
 async function generateShoppingList(req, res) {
   const { goal = 'spesa settimanale bilanciata per 2 persone con budget 60€' } = req.body;
 
-  const items = await prisma.pantryItem.findMany({ where: { userId: req.userId } });
+  const items = (await prisma.pantryItem.findMany({ where: { userId: req.userId } }))
+    .filter(i => !NON_EDIBLE_CATEGORIES.has(i.category));
   const [nutritionProfile, userLang] = await Promise.all([
     prisma.nutritionProfile.findUnique({ where: { userId: req.userId } }).catch(() => null),
     prisma.user.findUnique({ where: { id: req.userId }, select: { language: true } }).catch(() => null),

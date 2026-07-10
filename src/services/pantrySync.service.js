@@ -61,8 +61,12 @@ function findSimilarKey(key, existingKeys) {
 // Categorie valide per la dispensa (devono combaciare col frontend pantryScanner)
 const VALID_CATEGORIES = new Set([
   'frutta_verdura', 'carne_pesce', 'latticini', 'pane_pasta', 'bevande',
-  'dolci_snack', 'surgelati', 'dispensa', 'igiene_casa', 'altro',
+  'dolci_snack', 'surgelati', 'dispensa', 'igiene_casa', 'non_alimentare', 'altro',
 ]);
+
+// Categorie che NON sono cibo — vanno sempre escluse quando si genera la
+// lista ingredienti per le ricette (es. cibo per animali, stoviglie monouso).
+const NON_EDIBLE_CATEGORIES = new Set(['igiene_casa', 'non_alimentare']);
 
 // ─── Categoria automatica per la dispensa (niente più "altro" a tappeto) ───────
 // Usa STEM (radici) e non parole intere: "banan" copre banana/banane, ecc.
@@ -103,6 +107,12 @@ function inferCategory(name) {
       'miele','marmellat','confettura','crema spalmabile']],
     ['igiene_casa', ['carta igienica','c.igienica','detersivo','sapone','shampoo','dentifricio',
       'carta cucina','foxy','scottex','ammorbidente','candeggina','spugn','sgrassatore','det.']],
+    // Cibo per animali e stoviglie/posate monouso: non sono alimenti per
+    // l'utente, non vanno MAI proposti come ingrediente in una ricetta
+    // (es. "Monge Pet Tac.60G", "I Bicchieri 200ML", "Re Piatti Piani Riut").
+    ['non_alimentare', ['pet tac','pet.tac','monge pet','monop.pet','monop pet','crocchett',
+      'mangime','lettiera','bicchier','piatti piani','piatti fondi','posate','tovagliol',
+      'tovaglia','stuzzicadent','cannucc','stoviglie']],
   ];
   for (const [cat, words] of map) {
     if (words.some(w => n.includes(w))) return cat;
@@ -199,5 +209,5 @@ async function populatePantryFromReceipt(userId, items, receiptId) {
 
 module.exports = {
   populatePantryFromReceipt, isNonPantryItem, inferCategory, VALID_CATEGORIES,
-  normalizeName, findSimilarKey,
+  normalizeName, findSimilarKey, NON_EDIBLE_CATEGORIES,
 };

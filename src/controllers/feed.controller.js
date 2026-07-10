@@ -32,8 +32,22 @@ async function createFeed(req, res) {
   const rating       = b.rating ? parseFloat(b.rating) : null;
   const type         = b.type || (b.isDiscount === 'true' || b.isDiscount === true ? 'discount' : 'review');
   let   storeLocation = b.storeLocation || null;
-  if (!storeLocation && b.location) {
-    try { storeLocation = typeof b.location === 'string' ? b.location : JSON.stringify(b.location); } catch {}
+  // "location" arriva dal picker Google Places come GeoJSON Point
+  // {type,coordinates:[lng,lat]} (stringificato nel multipart) — prima veniva
+  // solo rimesso stringificato dentro storeLocation (mai leggibile), ora le
+  // coordinate si estraggono davvero per il filtro "vicino a me/città".
+  let   latitude = null;
+  let   longitude = null;
+  if (b.location) {
+    try {
+      const loc = typeof b.location === 'string' ? JSON.parse(b.location) : b.location;
+      const [lng, lat] = loc?.coordinates || [];
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        latitude = lat;
+        longitude = lng;
+      }
+      if (!storeLocation && loc?.address) storeLocation = loc.address;
+    } catch {}
   }
 
   let image = null;
@@ -51,6 +65,8 @@ async function createFeed(req, res) {
       description,
       storeName,
       storeLocation,
+      latitude,
+      longitude,
       rating,
       image,
       isApproved: true,

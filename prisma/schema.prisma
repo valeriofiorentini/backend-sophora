@@ -255,6 +255,12 @@ model Feed {
   image         String?
   storeName     String?
   storeLocation String?
+  // Coordinate del negozio scelto con Google Places al momento del post —
+  // prima venivano ricevute (campo "location") ma buttate via stringificate
+  // dentro storeLocation invece di essere salvate come numeri utilizzabili.
+  // Servono per il filtro "vicino a me / entro X km / città" in community.
+  latitude      Float?
+  longitude     Float?
   rating        Float?
   isApproved    Boolean  @default(true)
   createdAt     DateTime @default(now())
@@ -265,6 +271,7 @@ model Feed {
   // createdAt: la lista community ordina sempre per createdAt desc.
   @@index([userId])
   @@index([createdAt])
+  @@index([latitude, longitude])
 }
 
 model Favourite {

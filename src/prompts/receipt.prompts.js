@@ -30,6 +30,17 @@ REGOLE CRITICHE — seguile nell'ordine:
 
    ATTENZIONE PREZZI: Se un prezzo inizia con "4" o "4,xx" o "4.xx" verifica attentamente che non sia una lettura errata del "1" iniziale (es. "1,79" che sembra "4,79" su foto storta). Controlla sempre la coerenza col totale finale.
 
+0d. LETTURA RIGA PER RIGA — MAI SEPARARE NOMI E PREZZI (regola CRITICA): NON leggere prima TUTTI i nomi dall'alto in basso e poi TUTTI i prezzi dall'alto in basso in due passate separate — è la causa più grave di errore. Leggi UNA RIGA STAMPATA ALLA VOLTA: nome + IVA% + prezzo della STESSA riga vanno estratti INSIEME, prima di passare alla riga successiva. Il prezzo di un prodotto è SEMPRE quello scritto sulla STESSA riga orizzontale del suo nome, mai un prezzo preso da qualche riga più in basso (anche se numericamente "sembra tornare" con qualcos'altro).
+   Le righe di sconto indentate sotto un prodotto (es. "AP16 SCONT* CHE SC -0,50", "AP 16 TAGLI PREZZO -0,20") sono righe A SÉ: non spostano né "consumano" la posizione del prezzo dei prodotti successivi. Se salti una riga sconto senza notarla, tutti i prezzi dei prodotti sotto si disallineano di una riga: è un errore GRAVISSIMO da evitare sempre.
+   Esempio reale dell'errore da NON fare (scontrino CRAI): righe stampate:
+     "MOZZAR FRANCIA FIORD   4,00%   3,84"
+     "TRANCIO PORCHETTATO   10,00%   2,02"
+     ... (altri prodotti) ...
+     "FINDUS CROCCOLE SPIN  10,00%   4,39"
+     "  AP16 SCONT* CHE SC -1,40"
+   SBAGLIATO: scrivere item "Mozzar Francia Fiord" con prezzo 4,39 (quello è il prezzo di "Findus Croccole Spin", una riga molto più sotto) o item "Trancio Porchettato" con prezzo 1,79 (quello è il prezzo di "Yog Activ Mix Go Mu"). CORRETTO: "Mozzar Francia Fiord" 3,84, "Trancio Porchettato" 2,02 — ciascuno il prezzo sulla PROPRIA riga.
+   Una riga di sconto/sconto-IVA globale (es. "Sconto IVA 10,00% -3,50" vicino al subtotale) NON è MAI il prezzo di un prodotto: se un prezzo che stai per scrivere corrisponde esattamente a un valore di sconto visto altrove sullo scontrino, hai quasi certamente disallineato le righe — fermati e rileggi riga per riga dal prodotto in questione.
+
 1. SCONTI SU RIGA SEPARATA — REGOLA CRITICA: una riga è uno SCONTO (non un prodotto) quando ha queste caratteristiche: il PREZZO è NEGATIVO (es. -1,19) OPPURE il testo inizia con parole come "SCONTO", "TAGLIO PREZZO", "VOLANTINO", "PROMO", "RIDUZIONE", "ARTICOLO PREZZO FISSO".
    Uno sconto NON è MAI un item dell'array "items". Va sommato nel campo "discount" del PRODOTTO PRECEDENTE (valore positivo: -1,19 → discount 1.19).
    ⛔ NON inventare righe sconto: includi SOLO gli sconti che vedi DAVVERO stampati su QUESTO scontrino, con il loro importo reale. Non creare "items" con nome "Sconto…"/"Taglio Prezzo"/"Volantino" e prezzo 0. Se non c'è un prodotto precedente chiaro, ignora la riga.

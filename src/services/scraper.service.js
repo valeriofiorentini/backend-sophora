@@ -244,10 +244,10 @@ async function runAllScrapers() {
 
 // ─── Cron schedule ────────────────────────────────────────────────────────────
 function startScheduler() {
-  // Ogni giorno alle 04:00 (prima erano le 06:00): con la scansione a
-  // rotazione su tutti i comuni italiani (import-flyer-prices.js) il giro
-  // dura di piu' — si parte prima cosi' finisce comunque per le 6.
-  cron.schedule('0 4 * * *', async () => {
+  // Alle 23:00: ora la scansione copre TUTTI gli ~8000 comuni italiani ogni
+  // notte (import-flyer-prices.js, BATCH_DAYS=1), non solo una fetta a
+  // rotazione — dura circa 4-5h, quindi parte presto per finire entro le 6.
+  cron.schedule('0 23 * * *', async () => {
     await cleanExpiredPromos();
     // Scraper HTML legacy (Lidl/Eurospin/Conad): per lo piu' a vuoto perche' i
     // siti bloccano i bot, ma non fa danni — lo teniamo come fallback.
@@ -269,7 +269,7 @@ function startScheduler() {
     }
   });
 
-  console.log('📅 Scheduler attivo: scraper + OCR volantini, ogni giorno alle 04:00');
+  console.log('📅 Scheduler attivo: scraper + OCR volantini (tutti i comuni), ogni giorno alle 23:00');
 }
 
 module.exports = { startScheduler, runAllScrapers };

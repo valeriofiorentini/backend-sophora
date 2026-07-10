@@ -55,13 +55,12 @@ const PRIORITY_CITIES = [
 ];
 
 // Tutti gli altri ~7900 comuni italiani (dataset ISTAT) vengono scansionati
-// A ROTAZIONE su piu' giorni, non tutti insieme: 8000 richieste sequenziali
-// a Tiendeo in un colpo solo (anche con una pausa di 250ms tra una e l'altra,
-// ~2h+ di scansione ogni notte) rischierebbe seriamente di far bloccare
-// l'IP del server da Tiendeo. Con FLYER_CITY_BATCH_DAYS giorni di ciclo,
-// ogni comune viene comunque riletto periodicamente, ma la scansione
-// notturna resta di qualche minuto invece che di ore.
-const BATCH_DAYS = parseInt(process.env.FLYER_CITY_BATCH_DAYS, 10) || 20;
+// TUTTI ogni notte (BATCH_DAYS=1), nella finestra 23:00-06:00 (7h, vedi
+// scraper.service.js). Con la pausa di SLEEP_MS tra una richiesta e l'altra
+// (piu' gentile di prima proprio perche' ora scansioniamo tutto in un colpo)
+// il giro sta comodamente nella finestra: 8000 città * 2s ≈ 4.4h.
+// Se FLYER_CITY_BATCH_DAYS > 1 si torna alla rotazione su piu' notti.
+const BATCH_DAYS = parseInt(process.env.FLYER_CITY_BATCH_DAYS, 10) || 1;
 
 function getTodaysCityBatch() {
   const priority = new Set(PRIORITY_CITIES);
@@ -122,6 +121,10 @@ Estrai TUTTI i prodotti visibili con i loro prezzi. Se non leggi un prezzo usa n
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// Pausa tra una richiesta città e l'altra a Tiendeo. Con BATCH_DAYS=1 (tutti
+// gli 8000 comuni ogni notte) 2s è un buon compromesso: ~4.4h di scansione,
+// dentro la finestra 23:00-06:00, restando comunque "gentili" col sito.
+const SLEEP_MS = parseInt(process.env.FLYER_SLEEP_MS, 10) || 2000;
 const normKey = (n) => String(n).toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
 
 // Un'insegna di Tiendeo è un supermercato se il nome CONTIENE una parola della
@@ -192,7 +195,7 @@ async function importFlyerPrices() {
         }
       }
     } catch (_) { /* slug citta inesistente o rete: si prosegue */ }
-    await sleep(250); // gentile con Tiendeo
+    await sleep(SLEEP_MS);
   }
 
   const targets = [...byChain.values()];

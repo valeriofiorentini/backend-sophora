@@ -23,7 +23,7 @@ require('dotenv').config();
 const axios = require('axios');
 const OpenAI = require('openai');
 const prisma = require('../src/config/database');
-const { getCityCoords } = require('../src/utils/comuniGeo');
+const { getCityCoords, getAllCitySlugs } = require('../src/utils/comuniGeo');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
@@ -31,9 +31,10 @@ const openai = new OpenAI({
 });
 const MODEL_VISION = process.env.OPENROUTER_API_KEY ? 'openai/gpt-4o' : 'gpt-4o';
 
-// Citta da cui raccogliere i volantini: capoluoghi di tutte le regioni +
-// comuni della provincia di Roma. Piu citta = piu catene (anche regionali).
-const CITIES = [
+// Città sempre scansionate ogni giorno: capoluoghi di regione/provincia
+// principali + provincia di Roma — coprono la stragrande maggioranza delle
+// catene nazionali e regionali, quindi vale la pena rileggerle ogni volta.
+const PRIORITY_CITIES = [
   // Lazio + provincia di Roma
   'roma', 'tivoli', 'guidonia-montecelio', 'pomezia', 'fiumicino', 'velletri',
   'civitavecchia', 'latina', 'frosinone', 'rieti', 'viterbo',
@@ -52,6 +53,28 @@ const CITIES = [
   'palermo', 'catania', 'messina', 'siracusa', 'ragusa', 'trapani', 'agrigento',
   'cagliari', 'sassari', 'olbia',
 ];
+
+// Tutti gli altri ~7900 comuni italiani (dataset ISTAT) vengono scansionati
+// A ROTAZIONE su piu' giorni, non tutti insieme: 8000 richieste sequenziali
+// a Tiendeo in un colpo solo (anche con una pausa di 250ms tra una e l'altra,
+// ~2h+ di scansione ogni notte) rischierebbe seriamente di far bloccare
+// l'IP del server da Tiendeo. Con FLYER_CITY_BATCH_DAYS giorni di ciclo,
+// ogni comune viene comunque riletto periodicamente, ma la scansione
+// notturna resta di qualche minuto invece che di ore.
+const BATCH_DAYS = parseInt(process.env.FLYER_CITY_BATCH_DAYS, 10) || 20;
+
+function getTodaysCityBatch() {
+  const priority = new Set(PRIORITY_CITIES);
+  const rest = getAllCitySlugs().filter(s => !priority.has(s));
+  const batchSize = Math.ceil(rest.length / BATCH_DAYS);
+  // Giorni trascorsi dall'epoch, ciclico su BATCH_DAYS: ogni notte una fetta
+  // diversa e prevedibile, senza dover salvare uno stato su disco/DB.
+  const dayIndex = Math.floor(Date.now() / 86_400_000) % BATCH_DAYS;
+  const start = dayIndex * batchSize;
+  const batch = rest.slice(start, start + batchSize);
+  console.log(`[flyer] batch giorno ${dayIndex + 1}/${BATCH_DAYS}: ${batch.length} comuni (+ ${PRIORITY_CITIES.length} prioritari)`);
+  return [...PRIORITY_CITIES, ...batch];
+}
 
 // Le coordinate delle città in CITIES vengono da comuniGeo.js (dataset ISTAT
 // reale, ~7980 comuni) invece di una mappa scritta a mano — servono per
@@ -158,7 +181,7 @@ async function importFlyerPrices() {
 
   // 1. Raccoglie volantini supermercato da piu citta, 1 per catena
   const byChain = new Map();
-  for (const city of CITIES) {
+  for (const city of getTodaysCityBatch()) {
     try {
       const flyers = await getFlyers(city);
       for (const f of flyers) {

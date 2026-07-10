@@ -49,4 +49,41 @@ function getCityCoords(citySlug) {
   return byExactSlug.get(slug) || byStrippedSlug.get(slug) || null;
 }
 
-module.exports = { getCityCoords };
+// Elenco ordinato (alfabetico, deterministico) di tutti gli slug dei comuni —
+// usato per costruire batch stabili (es. la scansione volantini a rotazione).
+const ALL_CITY_SLUGS = Array.from(byExactSlug.keys()).sort();
+
+function getAllCitySlugs() {
+  return ALL_CITY_SLUGS;
+}
+
+/**
+ * Cerca un comune per nome/testo libero (usato dal filtro "Città" in
+ * community al posto di Google Geocoding — nessuna chiamata esterna,
+ * nessun costo, stesso dataset ISTAT già in memoria).
+ * @param {string} query testo digitato dall'utente, es. "Guidonia"
+ * @returns {{name: string, lat: number, lon: number}[]} fino a `limit` risultati
+ */
+function searchCityByName(query, limit = 5) {
+  const q = slugify(query);
+  if (!q) return [];
+  // Ranking: match esatto (0) > inizia con la query (1) > la contiene (2) —
+  // altrimenti "Roma" può restare fuori dal limite dietro a "Romano..." ecc.
+  const scored = [];
+  for (const row of raw) {
+    const slug = slugify(row.comune);
+    let rank = -1;
+    if (slug === q) rank = 0;
+    else if (slug.startsWith(q)) rank = 1;
+    else if (slug.includes(`-${q}`) || slug.includes(q)) rank = 2;
+    if (rank === -1) continue;
+    const lat = parseFloat(row.lat);
+    const lon = parseFloat(row.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    scored.push({ name: row.comune, lat, lon, rank });
+  }
+  scored.sort((a, b) => a.rank - b.rank);
+  return scored.slice(0, limit).map(({ name, lat, lon }) => ({ name, lat, lon }));
+}
+
+module.exports = { getCityCoords, getAllCitySlugs, searchCityByName };

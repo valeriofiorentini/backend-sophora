@@ -1,10 +1,13 @@
 /**
  * promoNotify.service.js
- * Notifica gli utenti delle offerte nuove vicino a loro.
+ * Notifica gli utenti delle offerte nuove vicino a loro E che comprano di solito.
  *
  * Flusso:
  *  - per ogni utente con fcmToken + posizione nota
  *  - trova le promo create dopo l'ultima notifica, ancora valide, entro NEAR_RADIUS_KM
+ *  - filtra solo quelle sui prodotti che l'utente compra di solito (dai suoi scontrini
+ *    degli ultimi INTEREST_WINDOW_DAYS) — se non ha ancora storico, niente filtro
+ *    (meglio notificare tutto che non notificare mai un utente nuovo)
  *  - invia UNA push riepilogo + crea una Notification in-app
  *  - aggiorna lastPromoNotifyAt (anti-spam: max 1 digest per esecuzione)
  *
@@ -15,8 +18,15 @@ const prisma = require('../config/database');
 const { sendPush } = require('./push.service');
 const { haversineKm: distanceKm } = require('./geo.service');
 
-const NEAR_RADIUS_KM = 30;   // raggio entro cui un'offerta è "vicina"
-const MAX_PROMOS_LISTED = 3; // quante offerte citare nel testo della push
+const NEAR_RADIUS_KM = 30;        // raggio entro cui un'offerta è "vicina"
+const MAX_PROMOS_LISTED = 3;      // quante offerte citare nel testo della push
+const INTEREST_WINDOW_DAYS = 90;  // storico acquisti usato per capire cosa interessa
+
+// Stessa normalizzazione usata altrove (shoppingList.controller) per confrontare
+// nomi prodotto scritti in modo leggermente diverso su scontrino vs volantino.
+function normKey(name) {
+  return String(name).toLowerCase().replace(/[^a-z0-9àèéìòù\s]/g, '').replace(/\s+/g, '_').slice(0, 80);
+}
 
 /**
  * Notifica tutti gli utenti idonei delle nuove offerte vicine.
@@ -63,12 +73,34 @@ async function notifyNearbyPromos() {
     // Solo le offerte create dopo l'ultima notifica dell'utente (o, se prima volta, ultime 7 gg)
     const since = u.lastPromoNotifyAt || new Date(now - 7 * 86_400_000);
 
-    const nearby = promos.filter(p => {
+    let nearby = promos.filter(p => {
       if (p.createdAt <= since) return false;
       return distanceKm(u.latitude, u.longitude, p.latitude, p.longitude) <= NEAR_RADIUS_KM;
     });
 
     if (nearby.length === 0) continue;
+
+    // Filtro "prodotti che ti interessano": solo le offerte su prodotti che
+    // l'utente ha già comprato di recente. Se non ha ancora scontrini nella
+    // finestra, niente filtro (altrimenti un utente nuovo non riceverebbe
+    // mai nulla, anche se le offerte vicine ci sono davvero).
+    const purchased = await prisma.receiptItem.findMany({
+      where: {
+        receipt: {
+          userId: u.id,
+          processedAt: { gte: new Date(now - INTEREST_WINDOW_DAYS * 86_400_000) },
+        },
+      },
+      select: { name: true },
+      take: 1000,
+    }).catch(() => []);
+
+    if (purchased.length > 0) {
+      const interestKeys = new Set(purchased.map(i => normKey(i.name)));
+      const interesting = nearby.filter(p => interestKeys.has(normKey(p.productName)));
+      if (interesting.length === 0) continue; // offerte vicine, ma su nulla che compri di solito
+      nearby = interesting;
+    }
 
     // Testo riepilogo
     const sample = nearby.slice(0, MAX_PROMOS_LISTED)

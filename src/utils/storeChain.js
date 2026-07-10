@@ -28,6 +28,16 @@ const ALIASES = [
   [/\bbennet\b/i,                   'Bennet'],
   [/\b(md\s*discount|\bmd\b)\b/i,   'MD'],
   [/\bpim\b/i,                      'Pim'],
+  [/\bcrai\b/i,                     'Crai'],
+  [/\baldi\b/i,                     'Aldi'],
+  [/\bsigma\b/i,                    'Sigma'],
+  [/\bal[iì]\s*(super|per)?\b/i,    'Alì'],
+  [/\btigre\b/i,                    'Tigre'],
+  [/\bemisfero\b/i,                 'Emisfero'],
+  [/\btosano\b/i,                   'Tosano'],
+  [/\brossetto\b/i,                 'Rossetto'],
+  [/\bmercat[oò]\b/i,               'Mercatò'],
+  [/\biper\s*triscount\b/i,         'Ipertriscount'],
 ];
 
 function canonicalizeChain(raw) {

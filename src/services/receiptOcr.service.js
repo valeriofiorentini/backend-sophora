@@ -54,22 +54,49 @@ async function getOcrModel() {
   return null; // null = usa modello standard
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Errori transitori (rate limit, sovraccarico, timeout, rete) — vale la pena
+// ritentare. Errori come 400 (prompt/immagine invalida) NON vanno ritentati.
+function isTransientOcrError(e) {
+  const status = e?.status || e?.response?.status;
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) return true;
+  const code = e?.code || e?.cause?.code;
+  if (code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNABORTED' || code === 'ENOTFOUND') return true;
+  if (/timeout/i.test(e?.message || '')) return true;
+  return false;
+}
+
 /**
  * Chiama l'API OCR con il modello specificato.
  * `store: false` = Zero Data Retention (GDPR): OpenAI non usa i dati per training.
+ * Ritenta fino a 2 volte (backoff 800ms/1600ms) sugli errori transitori
+ * (429/5xx/timeout upstream) — prima causavano un 500 immediato all'utente
+ * anche se bastava riprovare pochi secondi dopo.
  */
-async function callOcrApi(model, messages) {
-  return openai.chat.completions.create({
-    model,
-    messages,
-    response_format: { type: 'json_object' },
-    // 8000 token: uno scontrino con ~90 prodotti sta dentro senza troncare il JSON.
-    max_tokens: 8000,
-    // temperature 0: estrazione deterministica, l'LLM NON inventa né traduce i nomi
-    temperature: 0,
-    store: false,   // GDPR: Zero Data Retention
-    user: 'shopora-receipt-ocr',
-  });
+async function callOcrApi(model, messages, attempt = 0) {
+  try {
+    return await openai.chat.completions.create({
+      model,
+      messages,
+      response_format: { type: 'json_object' },
+      // 8000 token: uno scontrino con ~90 prodotti sta dentro senza troncare il JSON.
+      max_tokens: 8000,
+      // temperature 0: estrazione deterministica, l'LLM NON inventa né traduce i nomi
+      temperature: 0,
+      store: false,   // GDPR: Zero Data Retention
+      user: 'shopora-receipt-ocr',
+      timeout: 45000,
+    });
+  } catch (e) {
+    if (attempt < 2 && isTransientOcrError(e)) {
+      const delay = 800 * Math.pow(2, attempt);
+      console.warn(`[receipt] OCR ${model} errore transitorio (${e.message}) → retry tra ${delay}ms`);
+      await sleep(delay);
+      return callOcrApi(model, messages, attempt + 1);
+    }
+    throw e;
+  }
 }
 
 // ─── OCR dedicato (OCR.space) → testo esatto ──────────────────────────────────

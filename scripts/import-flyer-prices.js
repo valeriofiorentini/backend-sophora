@@ -109,7 +109,13 @@ async function ocrFlyer(imageUrl, retailer, endDate) {
     messages: [{ role: 'user', content: [{ type: 'text', text: FLYER_PROMPT }, { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } }] }],
     response_format: { type: 'json_object' }, max_tokens: 3000,
   });
-  const parsed = JSON.parse(r.choices[0].message.content);
+  let parsed;
+  try {
+    parsed = JSON.parse(r.choices[0].message.content);
+  } catch {
+    parsed = null;
+  }
+  if (!parsed || typeof parsed !== 'object') return 0; // il modello non ha estratto dati utili dal volantino (es. "null", JSON troncato)
   const storeChain = parsed.storeChain || retailer;
   const items = Array.isArray(parsed.items) ? parsed.items.filter(i => i.name && i.price) : [];
   const validUntil = endDate ? new Date(endDate) : new Date(Date.now() + 7 * 864e5);

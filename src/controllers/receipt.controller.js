@@ -99,6 +99,25 @@ async function scanReceipt(req, res) {
   const llmDisc = parseFloat(parsed.totalDiscount) || 0;
   parsed.totalDiscount = Math.round(Math.max(llmDisc, itemDiscSum) * 100) / 100;
 
+  // 3e. RICONCILIAZIONE: somma righe (totalPrice - discount) vs totale stampato.
+  // Se non torna, è quasi sempre un prezzo letto male dall'OCR (es. 1.79 invece
+  // di 1.39) — non correggiamo automaticamente i prezzi (rischio di sbagliare
+  // ancora di più), ma logghiamo per poterlo individuare.
+  const totalAmount = parseFloat(parsed.totalAmount);
+  if (Number.isFinite(totalAmount) && items.length > 0) {
+    const itemsNetSum = items.reduce(
+      (a, i) => a + ((parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0)),
+      0,
+    );
+    const diff = Math.round((itemsNetSum - totalAmount) * 100) / 100;
+    if (Math.abs(diff) > 0.05) {
+      console.warn(
+        `[receipt] TOTALE NON QUADRA (receipt=${receipt.id}, store=${parsed.storeChain || parsed.storeName || '?'}): ` +
+        `somma righe=${itemsNetSum.toFixed(2)} vs totale scontrino=${totalAmount.toFixed(2)} (diff=${diff.toFixed(2)}) — possibile prezzo letto male dall'OCR.`,
+      );
+    }
+  }
+
   // 4. Controllo duplicato: stessa data + negozio + totale + n° prodotti
   let isDuplicate = false;
 

@@ -205,7 +205,11 @@ model GroupListItem {
   barcode          String?
   source           ListItemSource @default(manual)
   checked          Boolean  @default(false)    // spuntato/comprato
-  addedByUserId    String?                      // chi l'ha aggiunta
+  addedByUserId    String?                      // chi l'ha aggiunta/scansionata (non necessariamente chi ha pagato)
+  // Chi ha DAVVERO pagato — esplicito, scelto dall'utente. Prima si deduceva
+  // solo da addedByUserId, quindi non si poteva dire "l'ho scansionato io ma
+  // ha pagato Fiore". Se null, il saldo ricade su addedByUserId (retrocompat).
+  paidByMemberId   String?
   assignedMemberId String?                      // a UN solo partecipante (retrocompatibilità)
   // Divisa tra PIÙ partecipanti scelti (es. carta igienica tra 3 coinquilini
   // su 5 del gruppo) — se vuoto E assignedMemberId non impostato, si divide

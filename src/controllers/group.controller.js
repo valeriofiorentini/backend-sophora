@@ -158,6 +158,7 @@ async function addListItem(req, res) {
   const source = allowed.has(req.body.source) ? req.body.source : 'manual';
 
   const splitMemberIds = await sanitizeSplitMemberIds(group.id, req.body.splitMemberIds);
+  const paidByMemberId = await sanitizePaidByMemberId(group.id, req.body.paidByMemberId, req.userId);
 
   const item = await prisma.groupListItem.create({
     data: {
@@ -168,6 +169,7 @@ async function addListItem(req, res) {
       barcode:          req.body.barcode ? String(req.body.barcode).slice(0, 64) : null,
       source,
       addedByUserId:    req.userId,
+      paidByMemberId,
       assignedMemberId: req.body.assignedMemberId || null,
       splitMemberIds,
     },
@@ -187,6 +189,19 @@ async function sanitizeSplitMemberIds(groupId, rawIds) {
   return rawIds.filter(id => validSet.has(id));
 }
 
+// Chi ha DAVVERO pagato — se non specificato esplicitamente dal client,
+// default a chi sta facendo la richiesta (comportamento precedente,
+// retrocompatibile), ma solo se esiste come GroupMember di questo gruppo.
+async function sanitizePaidByMemberId(groupId, rawId, requestUserId) {
+  const candidateId = rawId || null;
+  if (candidateId) {
+    const valid = await prisma.groupMember.findFirst({ where: { groupId, id: candidateId } });
+    if (valid) return valid.id;
+  }
+  const self = await prisma.groupMember.findFirst({ where: { groupId, userId: requestUserId } });
+  return self?.id || null;
+}
+
 // ─── POST /api/group/:groupId/list/bulk ─────────────────────────────────────────
 // Aggiunge PIÙ voci in una volta (es. tutti i prodotti di uno scontrino scansionato)
 async function addListItemsBulk(req, res) {
@@ -199,6 +214,9 @@ async function addListItemsBulk(req, res) {
   // Stessa assegnazione (a chi dividerlo) applicata a TUTTE le voci del batch:
   // scelta una volta sola per l'intero scontrino importato, non per singola riga.
   const splitMemberIds = await sanitizeSplitMemberIds(group.id, req.body.splitMemberIds);
+  // Stesso discorso per "chi ha pagato": una scelta sola per l'intero batch
+  // (es. ho scansionato io lo scontrino ma ha pagato Fiore).
+  const paidByMemberId = await sanitizePaidByMemberId(group.id, req.body.paidByMemberId, req.userId);
   const data = raw
     .filter(i => i && String(i.name || '').trim())
     .slice(0, 200)
@@ -210,6 +228,7 @@ async function addListItemsBulk(req, res) {
       barcode:       i.barcode ? String(i.barcode).slice(0, 64) : null,
       source,
       addedByUserId: req.userId,
+      paidByMemberId,
       splitMemberIds,
     }));
 
@@ -233,9 +252,15 @@ async function updateListItem(req, res) {
   });
   if (!existing) return error(res, 'Voce non trovata', 404);
 
-  const { name, quantity, price, checked, assignedMemberId, splitMemberIds } = req.body;
+  const { name, quantity, price, checked, assignedMemberId, splitMemberIds, paidByMemberId } = req.body;
   const sanitizedSplit = splitMemberIds !== undefined
     ? await sanitizeSplitMemberIds(group.id, splitMemberIds)
+    : undefined;
+  // paidByMemberId può essere corretto a posteriori (es. "in realtà ha pagato
+  // Fiore, non io") — a differenza della creazione, qui NON si applica il
+  // default automatico su "me stesso" se il client manda null esplicito.
+  const sanitizedPaidBy = paidByMemberId !== undefined
+    ? (paidByMemberId ? (await prisma.groupMember.findFirst({ where: { groupId: group.id, id: paidByMemberId } }))?.id || null : null)
     : undefined;
 
   const updated = await prisma.groupListItem.update({
@@ -247,6 +272,7 @@ async function updateListItem(req, res) {
       ...(checked          !== undefined && { checked: Boolean(checked) }),
       ...(assignedMemberId !== undefined && { assignedMemberId: assignedMemberId || null }),
       ...(sanitizedSplit   !== undefined && { splitMemberIds: sanitizedSplit }),
+      ...(sanitizedPaidBy  !== undefined && { paidByMemberId: sanitizedPaidBy }),
     },
   });
   return success(res, { item: updated });
@@ -412,7 +438,8 @@ async function removeMember(req, res) {
 
 // ─── GET /api/group/:groupId/balance ────────────────────────────────────────
 // "Chi deve quanto a chi": per ogni voce spuntata (comprata) con un prezzo,
-// chi l'ha aggiunta (addedByUserId) si considera che l'abbia pagata; il costo
+// chi ha DAVVERO pagato (paidByMemberId, scelto esplicitamente — o chi l'ha
+// aggiunta/scansionata come fallback) si considera che l'abbia pagata; il costo
 // va a chi è assegnata (assignedMemberId) o, se non assegnata, diviso in
 // parti uguali tra tutti i partecipanti. Il saldo netto per partecipante
 // (pagato - dovuto) viene poi ridotto al minor numero di transazioni
@@ -441,7 +468,12 @@ async function getGroupBalance(req, res) {
     const cost = Number(item.price) * item.quantity;
     totalSpent += cost;
 
-    const payerMemberId = item.addedByUserId ? memberIdByUserId.get(item.addedByUserId) : null;
+    // Priorità: paidByMemberId esplicito (scelto dall'utente, es. "l'ho
+    // scansionato io ma ha pagato Fiore") > fallback su chi l'ha aggiunta
+    // (retrocompatibilità con voci create prima di questo campo).
+    const payerMemberId = (item.paidByMemberId && net.has(item.paidByMemberId))
+      ? item.paidByMemberId
+      : (item.addedByUserId ? memberIdByUserId.get(item.addedByUserId) : null);
     if (payerMemberId && net.has(payerMemberId)) {
       net.set(payerMemberId, net.get(payerMemberId) + cost);
     }

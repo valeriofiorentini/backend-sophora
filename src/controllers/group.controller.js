@@ -142,6 +142,8 @@ async function addListItem(req, res) {
   const allowed = new Set(['manual', 'scan', 'receipt']);
   const source = allowed.has(req.body.source) ? req.body.source : 'manual';
 
+  const splitMemberIds = await sanitizeSplitMemberIds(group.id, req.body.splitMemberIds);
+
   const item = await prisma.groupListItem.create({
     data: {
       groupId:          group.id,
@@ -152,9 +154,22 @@ async function addListItem(req, res) {
       source,
       addedByUserId:    req.userId,
       assignedMemberId: req.body.assignedMemberId || null,
+      splitMemberIds,
     },
   });
   return success(res, { item }, 201);
+}
+
+// Filtra splitMemberIds tenendo solo id di membri che appartengono davvero
+// al gruppo (evita di inquinare il calcolo saldo con id a caso/di altri gruppi).
+async function sanitizeSplitMemberIds(groupId, rawIds) {
+  if (!Array.isArray(rawIds) || rawIds.length === 0) return [];
+  const valid = await prisma.groupMember.findMany({
+    where: { groupId, id: { in: rawIds } },
+    select: { id: true },
+  });
+  const validSet = new Set(valid.map(m => m.id));
+  return rawIds.filter(id => validSet.has(id));
 }
 
 // ─── POST /api/group/:groupId/list/bulk ─────────────────────────────────────────
@@ -199,7 +214,11 @@ async function updateListItem(req, res) {
   });
   if (!existing) return error(res, 'Voce non trovata', 404);
 
-  const { name, quantity, price, checked, assignedMemberId } = req.body;
+  const { name, quantity, price, checked, assignedMemberId, splitMemberIds } = req.body;
+  const sanitizedSplit = splitMemberIds !== undefined
+    ? await sanitizeSplitMemberIds(group.id, splitMemberIds)
+    : undefined;
+
   const updated = await prisma.groupListItem.update({
     where: { id: existing.id },
     data: {
@@ -208,6 +227,7 @@ async function updateListItem(req, res) {
       ...(price            !== undefined && { price: price != null ? Math.max(parseFloat(price) || 0, 0) : null }),
       ...(checked          !== undefined && { checked: Boolean(checked) }),
       ...(assignedMemberId !== undefined && { assignedMemberId: assignedMemberId || null }),
+      ...(sanitizedSplit   !== undefined && { splitMemberIds: sanitizedSplit }),
     },
   });
   return success(res, { item: updated });
@@ -407,7 +427,13 @@ async function getGroupBalance(req, res) {
       net.set(payerMemberId, net.get(payerMemberId) + cost);
     }
 
-    if (item.assignedMemberId && net.has(item.assignedMemberId)) {
+    // Priorità: più partecipanti scelti (splitMemberIds) > un solo assegnatario
+    // (assignedMemberId) > nessuna assegnazione = diviso tra tutto il gruppo.
+    const splitAmong = (item.splitMemberIds || []).filter(id => net.has(id));
+    if (splitAmong.length > 0) {
+      const share = cost / splitAmong.length;
+      for (const id of splitAmong) net.set(id, net.get(id) - share);
+    } else if (item.assignedMemberId && net.has(item.assignedMemberId)) {
       net.set(item.assignedMemberId, net.get(item.assignedMemberId) - cost);
     } else {
       // Nessuna assegnazione: si divide equamente tra tutti i partecipanti

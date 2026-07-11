@@ -206,7 +206,11 @@ model GroupListItem {
   source           ListItemSource @default(manual)
   checked          Boolean  @default(false)    // spuntato/comprato
   addedByUserId    String?                      // chi l'ha aggiunta
-  assignedMemberId String?                      // a chi è assegnata (divisione costi)
+  assignedMemberId String?                      // a UN solo partecipante (retrocompatibilità)
+  // Divisa tra PIÙ partecipanti scelti (es. carta igienica tra 3 coinquilini
+  // su 5 del gruppo) — se vuoto E assignedMemberId non impostato, si divide
+  // tra TUTTI i membri del gruppo (comportamento di default invariato).
+  splitMemberIds   String[] @default([])
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

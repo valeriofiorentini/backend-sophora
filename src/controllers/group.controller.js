@@ -57,6 +57,18 @@ async function createGroup(req, res) {
       if (!exists) { inviteCode = candidate; break; }
     }
 
+    // Il creatore va SEMPRE aggiunto come membro con il proprio userId: senza
+    // questo, quando lui paga/aggiunge prodotti nessuno riceve il credito nel
+    // calcolo saldo (getGroupBalance), creando debitori "orfani" senza un
+    // creditore corrispondente — il saldo del gruppo risulta sempre sballato.
+    const owner = await prisma.user.findUnique({
+      where:  { id: req.userId },
+      select: { name: true, surname: true, email: true },
+    });
+    const ownerName = [owner?.name, owner?.surname].filter(Boolean).join(' ')
+      || owner?.email?.split('@')[0] || 'Tu';
+    const ownerAlreadyIncluded = finalMembers.some(m => m.userId === req.userId);
+
     const group = await prisma.group.create({
       data: {
         name: finalName,
@@ -64,10 +76,13 @@ async function createGroup(req, res) {
         ownerId: req.userId,
         inviteCode,
         members: {
-          create: finalMembers.map(m => ({
-            name: m.name || m.email?.split('@')[0] || 'Membro',
-            userId: m.userId || null,
-          })),
+          create: [
+            ...(ownerAlreadyIncluded ? [] : [{ name: ownerName, userId: req.userId }]),
+            ...finalMembers.map(m => ({
+              name: m.name || m.email?.split('@')[0] || 'Membro',
+              userId: m.userId || null,
+            })),
+          ],
         },
       },
       include: { members: true },

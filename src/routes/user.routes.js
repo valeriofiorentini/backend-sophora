@@ -39,6 +39,7 @@ router.post('/refresh', asyncHandler(c.refreshTokenHandler));
 router.use(auth);
 
 router.get('/me',                                               asyncHandler(c.getProfile));
+router.get('/search',                                           asyncHandler(c.searchUsers));
 router.get('/plan-usage',                                       asyncHandler(c.getPlanUsage));
 router.patch('/edit-profile', upload.single('avatar'), validate(editProfileSchema), asyncHandler(c.editProfile));
 router.patch('/changePasswordByOldPassword', changePasswordLimit, asyncHandler(c.changePasswordByOldPassword));

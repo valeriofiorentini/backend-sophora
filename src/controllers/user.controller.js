@@ -567,6 +567,31 @@ async function getPlanUsage(req, res) {
   });
 }
 
+// ─── GET /api/user/search?q= ───────────────────────────────────────────────────
+// Cerca utenti reali per username/nome/email (es. per aggiungerli come
+// partecipanti a un gruppo spesa) — non è admin-only come getAllUsers,
+// qualsiasi utente autenticato può cercare per invitare qualcuno.
+async function searchUsers(req, res) {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return success(res, { users: [] });
+
+  const users = await prisma.user.findMany({
+    where: {
+      id: { not: req.userId }, // non serve trovare sé stessi
+      OR: [
+        { username: { contains: q, mode: 'insensitive' } },
+        { name:     { contains: q, mode: 'insensitive' } },
+        { surname:  { contains: q, mode: 'insensitive' } },
+        { email:    { contains: q, mode: 'insensitive' } },
+      ],
+    },
+    select: { id: true, username: true, name: true, surname: true, email: true, avatar: true },
+    take: 10,
+  });
+
+  return success(res, { users });
+}
+
 module.exports = {
   signup,
   login,
@@ -584,4 +609,5 @@ module.exports = {
   logout,
   deleteAccount,
   getAllUsers,
+  searchUsers,
 };

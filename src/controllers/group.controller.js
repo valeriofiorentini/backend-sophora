@@ -181,6 +181,9 @@ async function addListItemsBulk(req, res) {
   const allowed = new Set(['manual', 'scan', 'receipt']);
   const source = allowed.has(req.body.source) ? req.body.source : 'receipt';
   const raw = Array.isArray(req.body.items) ? req.body.items : [];
+  // Stessa assegnazione (a chi dividerlo) applicata a TUTTE le voci del batch:
+  // scelta una volta sola per l'intero scontrino importato, non per singola riga.
+  const splitMemberIds = await sanitizeSplitMemberIds(group.id, req.body.splitMemberIds);
   const data = raw
     .filter(i => i && String(i.name || '').trim())
     .slice(0, 200)
@@ -192,6 +195,7 @@ async function addListItemsBulk(req, res) {
       barcode:       i.barcode ? String(i.barcode).slice(0, 64) : null,
       source,
       addedByUserId: req.userId,
+      splitMemberIds,
     }));
 
   if (data.length === 0) return error(res, 'Nessuna voce valida da aggiungere');

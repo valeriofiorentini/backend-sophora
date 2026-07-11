@@ -111,7 +111,11 @@ const pantryItemSchema = z.object({
 const pantryUpdateSchema = z.object({
   name:      optStr(120),
   category:  optStr(40),
-  quantity:  optNum(0.01, 1000),
+  // min 0 (non 0.01): scendendo da 1 a 0 con "-" il frontend manda
+  // {quantity: 0, inStock: false} per segnare il prodotto come finito —
+  // con min 0.01 questa chiamata falliva validazione ("dati non validi")
+  // e il prodotto non veniva mai segnato come finito/eliminato.
+  quantity:  optNum(0, 1000),
   unit:      optStr(16),
   notes:     optStr(500),
   expiresAt: optDate(),

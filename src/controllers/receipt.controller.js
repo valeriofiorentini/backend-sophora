@@ -102,8 +102,11 @@ async function scanReceipt(req, res) {
   // 3e. RICONCILIAZIONE: somma righe (totalPrice - discount) vs totale stampato.
   // Se non torna, è quasi sempre un prezzo letto male dall'OCR (es. 1.79 invece
   // di 1.39) — non correggiamo automaticamente i prezzi (rischio di sbagliare
-  // ancora di più), ma logghiamo per poterlo individuare.
+  // ancora di più), ma lo segnaliamo ONESTAMENTE al client (priceMismatch),
+  // non solo nei log server: prima l'utente non aveva modo di saperlo e
+  // vedeva prezzi sbagliati senza alcun avviso.
   const totalAmount = parseFloat(parsed.totalAmount);
+  let priceMismatch = null;
   if (Number.isFinite(totalAmount) && items.length > 0) {
     const itemsNetSum = items.reduce(
       (a, i) => a + ((parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0)),
@@ -115,6 +118,7 @@ async function scanReceipt(req, res) {
         `[receipt] TOTALE NON QUADRA (receipt=${receipt.id}, store=${parsed.storeChain || parsed.storeName || '?'}): ` +
         `somma righe=${itemsNetSum.toFixed(2)} vs totale scontrino=${totalAmount.toFixed(2)} (diff=${diff.toFixed(2)}) — possibile prezzo letto male dall'OCR.`,
       );
+      priceMismatch = { itemsSum: Math.round(itemsNetSum * 100) / 100, receiptTotal: totalAmount, diff };
     }
   }
 
@@ -253,6 +257,7 @@ async function scanReceipt(req, res) {
     itemCount:   items.length,
     isDuplicate,
     ...(isDuplicate ? { message: 'Scontrino già presente: dati aggiornati, nessun punto aggiunto.' } : {}),
+    ...(priceMismatch ? { priceMismatch } : {}),
   }, 201);
 }
 

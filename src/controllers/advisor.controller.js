@@ -21,6 +21,7 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { isPremium } = require('../utils/planLimits');
+const { NON_EDIBLE_CATEGORIES } = require('../services/pantrySync.service');
 
 const BASKET_WINDOW_DAYS  = 90;   // finestra per la "spesa tipo" dell'utente
 const PRICES_WINDOW_DAYS  = 365;  // finestra per le mediane di PriceHistory
@@ -47,6 +48,15 @@ function median(values) {
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
+// Keyword non alimentari (buste, piatti/posate monouso, detersivi...): escluse
+// dal confronto prezzi tra catene, non ha senso paragonarne il costo come cibo.
+const NON_FOOD_KEYWORDS = ['carta igienica', 'detersiv', 'sapone', 'shampoo', 'bagnoschiuma', 'balsamo', 'dentifricio', 'spazzolino', 'assorbent', 'pannolin', 'shopper', 'sacchett', 'busta', 'buste', 'tovagliol', 'fazzolett', 'piatti di', 'piatti pian', 'piatti fond', 'bicchieri di', 'bicchier', 'posate', 'cannucc', 'alluminio', 'pellicola', 'candeggina', 'ammorbident', 'sgrassator', 'durex', 'settebello', 'deodorante', 'rasoio', 'lamette', 'cotone', 'salvy', 'struc'];
+
+function isNonFoodName(name) {
+  const n = ` ${name.toLowerCase()} `;
+  return NON_FOOD_KEYWORDS.some(k => n.includes(k));
+}
+
 /**
  * Estrae la "spesa tipo" dell'utente dagli scontrini degli ultimi
  * BASKET_WINDOW_DAYS giorni.
@@ -66,14 +76,16 @@ async function getUserBasket(userId) {
       ],
     },
     select: {
-      name: true, quantity: true, unitPrice: true, totalPrice: true,
+      name: true, quantity: true, unitPrice: true, totalPrice: true, category: true,
       receipt: { select: { storeChain: true } },
     },
   });
 
-  // Raggruppa per productKey
+  // Raggruppa per productKey — esclude buste/piatti/prodotti non alimentari:
+  // non ha senso confrontarne il prezzo tra catene come si fa per il cibo.
   const groups = new Map();
   for (const it of items) {
+    if (NON_EDIBLE_CATEGORIES.has(it.category) || isNonFoodName(it.name)) continue;
     const key = normalizeProductKey(it.name);
     if (!key) continue;
     if (!groups.has(key)) {
@@ -256,12 +268,9 @@ const MACRO_PROFILES = {
   // acqua_bevande: escluso — calorie trascurabili
 };
 
-// Keyword non alimentari: escluse dall'analisi salute
-const NON_FOOD_KEYWORDS = ['carta igienica', 'detersiv', 'sapone', 'shampoo', 'bagnoschiuma', 'balsamo', 'dentifricio', 'spazzolino', 'assorbent', 'pannolin', 'shopper', 'sacchett', 'tovagliol', 'fazzolett', 'piatti di', 'bicchieri di', 'alluminio', 'pellicola', 'candeggina', 'ammorbident', 'sgrassator', 'durex', 'settebello', 'deodorante', 'rasoio', 'lamette', 'cotone', 'salvy', 'struc'];
-
 function categorizeItem(name) {
+  if (isNonFoodName(name)) return 'non_food';
   const n = ` ${name.toLowerCase()} `;
-  if (NON_FOOD_KEYWORDS.some(k => n.includes(k))) return 'non_food';
   for (const cat of HEALTH_CATEGORIES) {
     if (cat.keywords.some(k => n.includes(k))) return cat.id;
   }

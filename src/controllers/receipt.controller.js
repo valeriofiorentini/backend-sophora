@@ -193,15 +193,23 @@ async function scanReceipt(req, res) {
       const priceEntries = items.filter(i => i.name && parseFloat(i.unitPrice) > 0);
 
       prisma.priceHistory.createMany({
-        data: priceEntries.map(item => ({
+        data: priceEntries.map(item => {
+          // Prezzo NETTO effettivamente pagato: sottrai lo sconto per riga
+          // (es. "Taglio Prezzo -0.40") dal prezzo di listino, altrimenti
+          // PriceHistory registra il prezzo lordo pre-sconto.
+          const gross = parseFloat(item.unitPrice);
+          const discount = item.discount != null ? parseFloat(item.discount) : 0;
+          const net = Math.max(0, gross - (discount || 0));
+          return {
           productKey:  normalizeProductKey(item.name),
           storeChain:  parsed.storeChain,
-          price:       parseFloat(item.unitPrice),
+          price:       net,
           isOnSale:    !!(item.discount || item.discountPercent),
           salePercent: item.discountPercent != null ? parseFloat(item.discountPercent) : null,
           observedAt,
           source:      'receipt_ocr',
-        })),
+          };
+        }),
         skipDuplicates: false,
       }).catch(e => console.warn('[receipt] priceHistory insert error:', e.message));
     } else {

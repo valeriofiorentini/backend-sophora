@@ -31,8 +31,11 @@ const OCR_MODEL_FALLBACK = process.env.OCR_MODEL_FALLBACK
 // Terzo parere, famiglia di modello ancora diversa (Google invece di
 // Anthropic/OpenAI) — usato solo se anche il secondo tentativo non riconcilia,
 // per dare un vero "terzo voto" indipendente invece di ripetere gli stessi due.
+// NB: se questo slug smette di funzionare (404 "No endpoints found"), verificare
+// lo slug corrente su https://openrouter.ai/models — il fallimento è comunque
+// gestito senza crash (consensusOcr degrada a 2 tentativi + fusione).
 const OCR_MODEL_THIRD = process.env.OCR_MODEL_THIRD
-  || (ON_OPENROUTER ? 'google/gemini-2.0-flash-001' : 'gpt-4o-mini');
+  || (ON_OPENROUTER ? 'google/gemini-2.5-flash' : 'gpt-4o-mini');
 
 // Parser JSON robusto: modelli diversi a volte avvolgono l'output in ```json … ```
 // o aggiungono testo. Ripuliamo prima di JSON.parse così il cambio modello è sicuro.

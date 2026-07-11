@@ -18,6 +18,14 @@ router.put('/:groupId/list/:itemId', asyncHandler(c.updateListItem));
 router.delete('/:groupId/list/:itemId', asyncHandler(c.deleteListItem));
 
 router.get('/:groupId', asyncHandler(c.getGroupById));
+router.put('/:groupId', asyncHandler(c.updateGroup));
 router.delete('/:groupId', asyncHandler(c.deleteGroup));
+
+// Partecipanti
+router.post('/:groupId/members', asyncHandler(c.addMember));
+router.delete('/:groupId/members/:memberId', asyncHandler(c.removeMember));
+
+// Saldo / chi deve quanto a chi
+router.get('/:groupId/balance', asyncHandler(c.getGroupBalance));
 
 module.exports = router;

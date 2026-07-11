@@ -280,7 +280,181 @@ async function deleteGroup(req, res) {
   return success(res, { message: 'Gruppo eliminato' });
 }
 
+// ─── PUT /api/group/:groupId ─────────────────────────────────────────────────
+// Modifica nome/budget del gruppo. Solo l'owner.
+async function updateGroup(req, res) {
+  const group = await prisma.group.findUnique({ where: { id: req.params.groupId } });
+  if (!group) return error(res, 'Gruppo non trovato', 404);
+  if (group.ownerId !== req.userId) return error(res, 'Solo chi ha creato il gruppo può modificarlo', 403);
+
+  const { name, budget } = req.body;
+  let parsedBudget;
+  if (budget !== undefined) {
+    if (budget === null || String(budget).trim() === '') {
+      parsedBudget = null;
+    } else {
+      parsedBudget = parseFloat(budget);
+      if (isNaN(parsedBudget)) return error(res, 'Il budget inserito non è un numero valido');
+    }
+  }
+
+  const updated = await prisma.group.update({
+    where: { id: group.id },
+    data: {
+      ...(name !== undefined && name !== null && String(name).trim() && { name: String(name).trim().slice(0, 80) }),
+      ...(budget !== undefined && { budget: parsedBudget }),
+    },
+    include: { members: true },
+  });
+  return success(res, { group: updated });
+}
+
+// ─── POST /api/group/:groupId/members ───────────────────────────────────────
+// Aggiunge un partecipante a un gruppo esistente. Due casi:
+//  - { name: "Marco" }              → partecipante "locale", solo un nome,
+//                                      nessun account, visibile solo dentro
+//                                      questo gruppo (chi lo aggiunge lo gestisce).
+//  - { userId: "..." }              → utente reale della piattaforma (già
+//                                      registrato) aggiunto come membro vero.
+async function addMember(req, res) {
+  const group = await getGroupIfMember(req.params.groupId, req.userId);
+  if (!group) return error(res, 'Gruppo non trovato o accesso negato', 404);
+
+  const { name, userId } = req.body;
+
+  if (userId) {
+    const already = await prisma.groupMember.findFirst({ where: { groupId: group.id, userId } });
+    if (already) return error(res, 'Questo utente è già nel gruppo');
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+    if (!user) return error(res, 'Utente non trovato', 404);
+    const member = await prisma.groupMember.create({
+      data: { groupId: group.id, userId, name: user.name || user.email?.split('@')[0] || 'Membro' },
+    });
+    return success(res, { member }, 201);
+  }
+
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) return error(res, 'Nome partecipante obbligatorio');
+
+  const member = await prisma.groupMember.create({
+    data: { groupId: group.id, name: trimmedName.slice(0, 60), userId: null },
+  });
+  return success(res, { member }, 201);
+}
+
+// ─── DELETE /api/group/:groupId/members/:memberId ───────────────────────────
+// Rimuove un partecipante. Solo l'owner (o il membro stesso, se ha un account).
+async function removeMember(req, res) {
+  const group = await prisma.group.findUnique({ where: { id: req.params.groupId } });
+  if (!group) return error(res, 'Gruppo non trovato', 404);
+
+  const member = await prisma.groupMember.findFirst({
+    where: { id: req.params.memberId, groupId: group.id },
+  });
+  if (!member) return error(res, 'Partecipante non trovato', 404);
+
+  const isOwner = group.ownerId === req.userId;
+  const isSelf  = member.userId === req.userId;
+  if (!isOwner && !isSelf) return error(res, 'Non autorizzato', 403);
+  if (member.userId === group.ownerId) return error(res, 'Non puoi rimuovere chi ha creato il gruppo');
+
+  // Le voci lista già assegnate a questo partecipante restano, solo senza assegnazione
+  // (altrimenti si perderebbe lo storico di cosa andava comprato/chi l'ha comprato).
+  await prisma.$transaction([
+    prisma.groupListItem.updateMany({
+      where: { groupId: group.id, assignedMemberId: member.id },
+      data:  { assignedMemberId: null },
+    }),
+    prisma.groupMember.delete({ where: { id: member.id } }),
+  ]);
+
+  return success(res, { message: 'Partecipante rimosso' });
+}
+
+// ─── GET /api/group/:groupId/balance ────────────────────────────────────────
+// "Chi deve quanto a chi": per ogni voce spuntata (comprata) con un prezzo,
+// chi l'ha aggiunta (addedByUserId) si considera che l'abbia pagata; il costo
+// va a chi è assegnata (assignedMemberId) o, se non assegnata, diviso in
+// parti uguali tra tutti i partecipanti. Il saldo netto per partecipante
+// (pagato - dovuto) viene poi ridotto al minor numero di transazioni
+// (stesso algoritmo "chi salda chi" di Splitwise).
+async function getGroupBalance(req, res) {
+  const group = await getGroupIfMember(req.params.groupId, req.userId);
+  if (!group) return error(res, 'Gruppo non trovato o accesso negato', 404);
+
+  const [members, items] = await Promise.all([
+    prisma.groupMember.findMany({ where: { groupId: group.id } }),
+    prisma.groupListItem.findMany({
+      where: { groupId: group.id, checked: true, price: { not: null } },
+    }),
+  ]);
+
+  if (members.length === 0) {
+    return success(res, { balances: [], transactions: [], totalSpent: 0 });
+  }
+
+  // addedByUserId (User.id) → GroupMember.id: serve per sapere chi ha "pagato"
+  const memberIdByUserId = new Map(members.filter(m => m.userId).map(m => [m.userId, m.id]));
+  const net = new Map(members.map(m => [m.id, 0])); // positivo = gli devono soldi, negativo = deve soldi
+
+  let totalSpent = 0;
+  for (const item of items) {
+    const cost = Number(item.price) * item.quantity;
+    totalSpent += cost;
+
+    const payerMemberId = item.addedByUserId ? memberIdByUserId.get(item.addedByUserId) : null;
+    if (payerMemberId && net.has(payerMemberId)) {
+      net.set(payerMemberId, net.get(payerMemberId) + cost);
+    }
+
+    if (item.assignedMemberId && net.has(item.assignedMemberId)) {
+      net.set(item.assignedMemberId, net.get(item.assignedMemberId) - cost);
+    } else {
+      // Nessuna assegnazione: si divide equamente tra tutti i partecipanti
+      const share = cost / members.length;
+      for (const m of members) net.set(m.id, net.get(m.id) - share);
+    }
+  }
+
+  const byName = new Map(members.map(m => [m.id, m.name]));
+  const balances = members.map(m => ({
+    memberId: m.id,
+    name:     m.name,
+    userId:   m.userId,
+    balance:  Math.round(net.get(m.id) * 100) / 100, // >0 gli devono dare, <0 deve dare
+  }));
+
+  // Riduci a poche transazioni: chi deve di più paga chi ha anticipato di più.
+  const debtors   = balances.filter(b => b.balance < -0.01).map(b => ({...b})).sort((a, b) => a.balance - b.balance);
+  const creditors = balances.filter(b => b.balance > 0.01).map(b => ({...b})).sort((a, b) => b.balance - a.balance);
+  const transactions = [];
+  let i = 0, j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const amount = Math.min(-debtors[i].balance, creditors[j].balance);
+    if (amount > 0.01) {
+      transactions.push({
+        fromMemberId: debtors[i].memberId,
+        fromName:     byName.get(debtors[i].memberId),
+        toMemberId:   creditors[j].memberId,
+        toName:       byName.get(creditors[j].memberId),
+        amount:       Math.round(amount * 100) / 100,
+      });
+    }
+    debtors[i].balance += amount;
+    creditors[j].balance -= amount;
+    if (Math.abs(debtors[i].balance) < 0.01) i++;
+    if (Math.abs(creditors[j].balance) < 0.01) j++;
+  }
+
+  return success(res, {
+    balances,
+    transactions,
+    totalSpent: Math.round(totalSpent * 100) / 100,
+  });
+}
+
 module.exports = {
-  createGroup, getGroups, getGroupById, deleteGroup,
+  createGroup, getGroups, getGroupById, deleteGroup, updateGroup,
+  addMember, removeMember, getGroupBalance,
   joinGroup, getList, addListItem, addListItemsBulk, updateListItem, deleteListItem,
 };

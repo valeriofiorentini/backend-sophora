@@ -28,6 +28,11 @@ const OCR_MODEL_ACCURATE = process.env.OCR_MODEL
   || (ON_OPENROUTER ? 'anthropic/claude-sonnet-4' : 'gpt-4o');   // primario (massima fedeltà)
 const OCR_MODEL_FALLBACK = process.env.OCR_MODEL_FALLBACK
   || (ON_OPENROUTER ? 'openai/gpt-4o' : 'gpt-4o');               // secondo parere su modello diverso
+// Terzo parere, famiglia di modello ancora diversa (Google invece di
+// Anthropic/OpenAI) — usato solo se anche il secondo tentativo non riconcilia,
+// per dare un vero "terzo voto" indipendente invece di ripetere gli stessi due.
+const OCR_MODEL_THIRD = process.env.OCR_MODEL_THIRD
+  || (ON_OPENROUTER ? 'google/gemini-2.0-flash-001' : 'gpt-4o-mini');
 
 // Parser JSON robusto: modelli diversi a volte avvolgono l'output in ```json … ```
 // o aggiungono testo. Ripuliamo prima di JSON.parse così il cambio modello è sicuro.
@@ -198,22 +203,119 @@ function reassembleReceiptLines(text) {
   return out.join('\n');
 }
 
-// Verifica somma netta item vs totalAmount (usata sia dalla pipeline ibrida che
-// da quella vision pura): se la discrepanza supera il 5%, l'LLM ha quasi certamente
-// letto male un prezzo o saltato una riga — serve un secondo giro di controllo.
-function sumMismatch(parsed) {
-  if (!parsed) return true;
+// Discrepanza relativa somma netta item vs totalAmount. 0 = torna perfettamente,
+// 1 = differenza pari all'intero totale. JSON mancante/vuoto → discrepanza max.
+function diffRatio(parsed) {
+  if (!parsed) return 1;
   const items = Array.isArray(parsed.items) ? parsed.items : [];
   const sumItems = items.reduce((acc, i) =>
     acc + (parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0), 0);
   const total = parseFloat(parsed.totalAmount) || 0;
-  if (total <= 0 || items.length === 0) return false;
-  const diff = Math.abs(sumItems - total) / total;
-  if (diff > 0.05) {
-    console.warn(`[receipt] somma netta item (${sumItems.toFixed(2)}) ≠ total (${total.toFixed(2)}) diff=${(diff*100).toFixed(1)}%`);
-    return true;
+  if (total <= 0 || items.length === 0) return 0; // niente da confrontare: non blocca la pipeline
+  return Math.abs(sumItems - total) / total;
+}
+
+// >5% di discrepanza = l'LLM ha quasi certamente letto male un prezzo o
+// saltato una riga — soglia sotto cui una lettura viene accettata subito.
+const MISMATCH_THRESHOLD = 0.05;
+
+function medianOf(nums) {
+  const s = nums.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!s.length) return null;
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// Nessuno dei tentativi riconcilia esattamente: invece di accettare ciecamente
+// l'ultimo letto, si fondono le letture riga per riga prendendo la MEDIANA di
+// prezzo/sconto tra i tentativi disponibili (se hanno lo stesso numero di
+// righe, quindi probabilmente lo stesso ordine) — un prezzo "di mezzo" tra i
+// 3 pareri è statisticamente più vicino al vero valore di un singolo tentativo.
+function mergeAttempts(attempts) {
+  const valid = attempts.filter(a => a.parsed && Array.isArray(a.parsed.items));
+  if (valid.length === 0) return attempts[attempts.length - 1]?.parsed || null;
+
+  const base = [...valid].sort((a, b) => a.diff - b.diff)[0]; // il "meno sbagliato"
+  const sameCount = valid.length > 1 && valid.every(a => a.parsed.items.length === base.parsed.items.length);
+
+  if (!sameCount) {
+    console.warn(`[receipt] consensus: righe di conteggio diverso tra i tentativi → uso la lettura con discrepanza minore (${base.model})`);
+    return base.parsed;
   }
-  return false;
+
+  const mergedItems = base.parsed.items.map((item, idx) => {
+    const totalPrices = valid.map(a => parseFloat(a.parsed.items[idx]?.totalPrice)).filter(Number.isFinite);
+    const unitPrices  = valid.map(a => parseFloat(a.parsed.items[idx]?.unitPrice)).filter(Number.isFinite);
+    const discounts   = valid.map(a => parseFloat(a.parsed.items[idx]?.discount)).filter(Number.isFinite);
+    return {
+      ...item,
+      totalPrice: totalPrices.length ? medianOf(totalPrices) : item.totalPrice,
+      unitPrice:  unitPrices.length  ? medianOf(unitPrices)  : item.unitPrice,
+      discount:   discounts.length   ? medianOf(discounts)   : item.discount,
+    };
+  });
+  console.info(`[receipt] consensus: fuse ${valid.length} letture riga per riga (mediana prezzi)`);
+  return { ...base.parsed, items: mergedItems };
+}
+
+/**
+ * Legge lo scontrino con fino a 3 modelli diversi in cascata, fermandosi al
+ * primo che riconcilia (somma righe ≈ totale). Se nessuno riconcilia, fonde
+ * le 3 letture (mediana per riga) invece di fidarsi ciecamente dell'ultima.
+ * `baseMessages`: array messages already pronto (prompt ibrido o vision puro).
+ * `hintText`: messaggio di correzione da aggiungere quando serve un secondo/
+ * terzo parere in continuazione della conversazione.
+ */
+async function consensusOcr(baseMessages, hintText, models) {
+  const [modelA, modelB, modelC] = models;
+  const attempts = [];
+
+  // Tentativo 1
+  let model = modelA;
+  let resp;
+  try {
+    resp = await callOcrApi(model, baseMessages);
+  } catch (e) {
+    console.warn(`[receipt] consensus: modello primario ${model} fallito (${e.message}) → ${modelB}`);
+    model = modelB;
+    resp = await callOcrApi(model, baseMessages);
+  }
+  let rawContent = resp.choices[0].message.content;
+  let parsed = parseOcrJson(rawContent);
+  attempts.push({ parsed, model, diff: diffRatio(parsed) });
+  if (attempts[0].diff <= MISMATCH_THRESHOLD) return parsed;
+
+  // Tentativo 2: secondo parere, in continuazione con hint di correzione
+  const secondModel = model === modelB ? modelA : modelB;
+  console.warn(`[receipt] consensus: tentativo 1 (${model}) non torna (diff=${(attempts[0].diff * 100).toFixed(1)}%) → tentativo 2 con ${secondModel}`);
+  try {
+    const resp2 = await callOcrApi(secondModel, [
+      ...baseMessages,
+      { role: 'assistant', content: rawContent },
+      { role: 'user', content: hintText },
+    ]);
+    const parsed2 = parseOcrJson(resp2.choices[0].message.content);
+    attempts.push({ parsed: parsed2, model: secondModel, diff: diffRatio(parsed2) });
+    if (attempts[1].diff <= MISMATCH_THRESHOLD) return parsed2;
+  } catch (e) {
+    console.warn(`[receipt] consensus: tentativo 2 (${secondModel}) fallito: ${e.message}`);
+  }
+
+  // Tentativo 3: terzo modello, lettura INDIPENDENTE (non continuazione, per
+  // non ereditare l'errore dei tentativi precedenti) con un modello di
+  // famiglia diversa dai primi due.
+  console.warn(`[receipt] consensus: tentativo 2 non torna → tentativo 3 con ${modelC} (lettura indipendente)`);
+  try {
+    const resp3 = await callOcrApi(modelC, baseMessages);
+    const parsed3 = parseOcrJson(resp3.choices[0].message.content);
+    attempts.push({ parsed: parsed3, model: modelC, diff: diffRatio(parsed3) });
+    if (attempts[attempts.length - 1].diff <= MISMATCH_THRESHOLD) return parsed3;
+  } catch (e) {
+    console.warn(`[receipt] consensus: tentativo 3 (${modelC}) fallito: ${e.message}`);
+  }
+
+  console.warn(`[receipt] consensus: nessuno dei ${attempts.length} tentativi riconcilia perfettamente → fusione mediana`);
+  return mergeAttempts(attempts);
 }
 
 // Pipeline ibrida: OCR testo → testo+immagine all'LLM. Ritorna il JSON parsato,
@@ -270,31 +372,11 @@ ${text}
   }];
 
   try {
-    let resp, model;
-    try {
-      resp = await callOcrApi(OCR_MODEL_ACCURATE, messages);
-      model = OCR_MODEL_ACCURATE;
-    } catch {
-      resp = await callOcrApi(OCR_MODEL_FALLBACK, messages);
-      model = OCR_MODEL_FALLBACK;
-    }
-    let rawContent = resp.choices[0].message.content;
-    let parsed = parseOcrJson(rawContent);
-
-    // Stesso controllo somma-vs-totale della pipeline vision pura: se non torna,
-    // richiedi un secondo parere (modello diverso) prima di accettare il risultato.
-    if (sumMismatch(parsed)) {
-      const fallbackModel = model === OCR_MODEL_FALLBACK ? OCR_MODEL_ACCURATE : OCR_MODEL_FALLBACK;
-      console.warn(`[receipt] pipeline ibrida: somma non torna → secondo parere ${fallbackModel}`);
-      const fallbackResp = await callOcrApi(fallbackModel, [
-        ...messages,
-        { role: 'assistant', content: rawContent },
-        { role: 'user', content: 'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto oppure hai letto male un prezzo nella colonna PREZZO(€) (occhio a cifre confondibili come 9/6, 8/6, 1/4). Rileggi TUTTE le righe usando sia il testo OCR che l\'immagine, e restituisci il JSON corretto e completo.' },
-      ]);
-      const fallbackParsed = parseOcrJson(fallbackResp.choices[0].message.content);
-      if (fallbackParsed) parsed = fallbackParsed;
-    }
-    return parsed;
+    return await consensusOcr(
+      messages,
+      'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto oppure hai letto male un prezzo nella colonna PREZZO(€) (occhio a cifre confondibili come 9/6, 8/6, 1/4). Rileggi TUTTE le righe usando sia il testo OCR che l\'immagine, e restituisci il JSON corretto e completo.',
+      [OCR_MODEL_ACCURATE, OCR_MODEL_FALLBACK, OCR_MODEL_THIRD],
+    );
   } catch (e) {
     console.warn('[receipt] pipeline ibrida fallita → fallback vision puro:', e.message);
     return null;
@@ -320,46 +402,12 @@ async function runReceiptOcr(imageBase64) {
     ],
   }];
 
-  let firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
-  let response;
-  try {
-    response = await callOcrApi(firstModel, messages);
-  } catch (primaryErr) {
-    if (firstModel === OCR_MODEL_FALLBACK) throw primaryErr; // già sul fallback: rilancia
-    console.warn(`[receipt] modello primario ${firstModel} fallito (${primaryErr.message}) → fallback ${OCR_MODEL_FALLBACK}`);
-    firstModel = OCR_MODEL_FALLBACK;
-    response = await callOcrApi(OCR_MODEL_FALLBACK, messages);
-  }
-  const rawContent = response.choices[0].message.content;
-
-  let parsedFirst;
-  try {
-    parsedFirst = parseOcrJson(rawContent);
-    console.info(`[receipt] OCR ok con modello ${firstModel}`);
-  } catch {
-    parsedFirst = null;
-  }
-
-  // Validazione somma NETTA item vs totalAmount: discrepanza >5% o JSON rotto → secondo parere
-  const needsFallback = sumMismatch(parsedFirst);
-
-  if (needsFallback) {
-    console.warn(`[receipt] fallback a ${OCR_MODEL_FALLBACK}`);
-    const fallbackRes = await callOcrApi(OCR_MODEL_FALLBACK, [
-      ...messages,
-      ...(parsedFirst ? [
-        { role: 'assistant', content: rawContent },
-        { role: 'user', content: 'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.' },
-      ] : [
-        { role: 'assistant', content: rawContent },
-        { role: 'user', content: 'Il JSON precedente è malformato. Restituisci SOLO il JSON corretto senza markdown, backtick o testo extra.' },
-      ]),
-    ]);
-    parsed = parseOcrJson(fallbackRes.choices[0].message.content);
-    console.info(`[receipt] OCR ok con fallback ${OCR_MODEL_FALLBACK}`);
-  } else {
-    parsed = parsedFirst;
-  }
+  const firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
+  parsed = await consensusOcr(
+    messages,
+    'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.',
+    [firstModel, OCR_MODEL_FALLBACK, OCR_MODEL_THIRD],
+  );
   return parsed;
 }
 

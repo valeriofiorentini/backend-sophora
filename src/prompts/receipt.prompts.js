@@ -97,9 +97,18 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 5b. NESSUN PRODOTTO SALTATO: Conta le righe prodotto sullo scontrino e verifica che l'array "items" abbia lo stesso numero di elementi. Se una riga ha un prezzo valido e non è un subtotale/IVA, deve essere inclusa.
 
-5c. VERIFICA TOTALE — CONTROLLO FINALE: Dopo aver estratto tutti gli item, somma mentalmente i loro totalPrice (al netto degli sconti per articolo). Il risultato deve avvicinarsi al totalAmount dello scontrino (±0,10€ per arrotondamenti IVA). Se la somma si discosta di più, significa che hai letto male qualche prezzo — riesamina le righe con cifre ambigue (es. 9 vs 6, 8 vs 6, 0 vs 6, 1 vs 4, 3 vs 8, 5 vs 2) e correggile PRIMA di rispondere. Questo controllo NON è opzionale: fallo sempre, anche se ti sembra di aver letto bene, perché è l'unico modo per accorgersi di una cifra scambiata senza rileggere ogni riga una per una.
+5c. VERIFICA TOTALE — CONTROLLO FINALE: Dopo aver estratto tutti gli item, somma mentalmente i loro totalPrice (al netto degli sconti per articolo). Il risultato deve avvicinarsi al totalAmount dello scontrino (±0,10€ per arrotondamenti IVA). Se la somma si discosta di più, significa che hai letto male qualche prezzo — riesamina OGNI cifra di OGNI prezzo (non solo la prima) usando la lista di coppie ambigue della regola 5d, e correggile PRIMA di rispondere. Questo controllo NON è opzionale: fallo sempre, anche se ti sembra di aver letto bene, perché è l'unico modo per accorgersi di una cifra scambiata senza rileggere ogni riga una per una.
 
-5d. CIFRE FACILMENTE CONFUSE — attenzione especiale a "9" vs "6" e "5" vs "2": sulla carta termica dei prezzi stampati, il 9 e il 6 sono la stessa forma capovolta e si scambiano facilmente; anche il 5 e il 2 si confondono spesso (entrambi hanno una curva superiore simile), specialmente su foto storte, sfocate o con poca luce — esempio reale: "5,32" letto come "2,52" (non solo la prima cifra: entrambe le cifre sono state scambiate). Prima di scrivere un prezzo con una di queste cifre, guarda attentamente la forma esatta di OGNI cifra del numero, non solo la prima. In caso di dubbio, preferisci il valore che rende la somma degli item più vicina al totalAmount dello scontrino (vedi regola 5c) — il totale stampato è sempre più affidabile della singola cifra ambigua.
+5d. CIFRE FACILMENTE CONFUSE — lista completa delle coppie che si scambiano più spesso sulla carta termica dei prezzi stampati (foto storte, sfocate, poca luce, stampa sbiadita fanno confondere la forma):
+    - 9 ↔ 6 (stessa forma capovolta — la più frequente in assoluto)
+    - 5 ↔ 2 (curva superiore simile — es. "5,32" letto come "2,52": possono scambiarsi PIÙ cifre nello stesso numero, non solo la prima)
+    - 5 ↔ 6 e 5 ↔ 3 (aste e curve simili su stampa sbiadita)
+    - 0 ↔ 6, 0 ↔ 8, 0 ↔ 9 (forme chiuse/ovali simili)
+    - 3 ↔ 8 (entrambe curve doppie)
+    - 1 ↔ 7 (asta verticale, il trattino orizzontale del 7 può sparire su stampa sbiadita)
+    - 1 ↔ 4 (su alcune stampanti termiche il 4 aperto assomiglia a 1 seguito da un tratto)
+    - 8 ↔ 9 (anello superiore quasi identico)
+    Prima di scrivere QUALSIASI cifra tra queste, guarda attentamente la forma esatta — non dare per scontata la prima lettura. In caso di dubbio residuo, preferisci il valore che rende la somma degli item più vicina al totalAmount dello scontrino (regola 5c) — il totale stampato è sempre più affidabile di una singola cifra ambigua.
 
 6. FOTO SFOCATA O PARZIALE: Se un valore non è leggibile usa null. Non inventare prezzi.
 

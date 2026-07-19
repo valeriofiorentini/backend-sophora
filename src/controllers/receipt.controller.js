@@ -26,6 +26,36 @@ const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/he
 
 const RECEIPT_SCAN_POINTS = 50;
 
+// Verifica (best-effort) che il negozio/indirizzo letto dall'OCR corrisponda
+// a un negozio noto di quella catena nel nostro DB — l'OCR può "allucinare"
+// un indirizzo di sfondo nella foto invece di leggere quello vero stampato.
+// Se la catena non ha copertura nel nostro Store DB, non giudica (troppi
+// falsi positivi altrimenti): ritorna null solo quando ha dati per confrontare.
+async function verifyStoreAddress(storeChain, storeAddress) {
+  if (!storeChain || !storeAddress) return null;
+  const stores = await prisma.store.findMany({
+    where: { chain: { equals: storeChain, mode: 'insensitive' } },
+    select: { address: true },
+    take: 300,
+  });
+  if (stores.length === 0) return null; // nessuna copertura per questa catena
+
+  const normalize = s => (s || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+  const targetWords = new Set(normalize(storeAddress));
+  if (targetWords.size === 0) return null;
+
+  const matched = stores.some(s => {
+    const words = normalize(s.address);
+    const overlap = words.filter(w => targetWords.has(w)).length;
+    return overlap >= Math.min(2, targetWords.size);
+  });
+  return matched ? null : { storeChain, storeAddress };
+}
+
 // ─── POST /api/receipts/scan ───────────────────────────────────────────────────
 async function scanReceipt(req, res) {
   if (!req.file) return error(res, 'Immagine scontrino obbligatoria');
@@ -81,6 +111,13 @@ async function scanReceipt(req, res) {
   parsed.storeAddress  = cleanStr(parsed.storeAddress);
   parsed.paymentMethod = cleanStr(parsed.paymentMethod);
   parsed.receiptDate   = cleanDate(parsed.receiptDate);
+
+  // 3a2. Verifica negozio/indirizzo contro il DB Store (best-effort, vedi sopra).
+  const addressMismatch = await verifyStoreAddress(parsed.storeChain, parsed.storeAddress)
+    .catch(e => { console.warn('[receipt] verifyStoreAddress error:', e.message); return null; });
+  if (addressMismatch) {
+    console.warn(`[receipt] INDIRIZZO NON TROVATO per ${addressMismatch.storeChain}: "${addressMismatch.storeAddress}" non corrisponde a nessun negozio noto di questa catena.`);
+  }
 
   // 3c. SANITIZE ITEMS: rimuovi pseudo-righe "sconto" e ghost row a prezzo 0.
   const DISCOUNT_LABEL = /^\s*(scont|taglio?\s*prezz|articolo\s*prezzo\s*fisso|volantin|promo\b|offert|riduzion|buono\s*sconto)/i;
@@ -258,6 +295,7 @@ async function scanReceipt(req, res) {
     isDuplicate,
     ...(isDuplicate ? { message: 'Scontrino già presente: dati aggiornati, nessun punto aggiunto.' } : {}),
     ...(priceMismatch ? { priceMismatch } : {}),
+    ...(addressMismatch ? { addressMismatch } : {}),
   }, 201);
 }
 

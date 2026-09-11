@@ -20,8 +20,11 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   );
 }
 
-const ACCESS_TOKEN_TTL  = process.env.JWT_EXPIRES_IN  || '15m'; // 15 minuti
-const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60 * 1000;             // 30 giorni (ms)
+const ACCESS_TOKEN_TTL  = process.env.JWT_EXPIRES_IN  || '15m'; // 15 minuti — rinnovato in automatico e silenzioso dal client (axiosHelper), invisibile all'utente finché il refresh token è valido
+// 180 giorni (era 30) — a scorrimento: ogni apertura app lo rinnova da "ora"
+// (rotateRefreshToken), quindi con un uso anche solo mensile la sessione non
+// scade mai, in stile Instagram. Scade solo dopo 6 mesi di reale inattività.
+const REFRESH_TOKEN_TTL = 180 * 24 * 60 * 60 * 1000;
 
 /**
  * Genera un JWT di accesso con scadenza breve.

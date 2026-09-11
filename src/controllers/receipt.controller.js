@@ -56,9 +56,34 @@ async function verifyStoreAddress(storeChain, storeAddress) {
   return matched ? null : { storeChain, storeAddress };
 }
 
+// Ricompone più foto (es. metà superiore + metà inferiore di uno scontrino
+// troppo lungo per uno scatto solo) in UNA sola immagine verticale, così il
+// resto della pipeline OCR (pensata per un'unica immagine) non cambia.
+// Le foto vengono allineate alla larghezza della più stretta e impilate
+// nell'ordine in cui l'utente le ha scattate/selezionate.
+async function combineReceiptPhotos(files) {
+  if (files.length === 1) {
+    return `data:${files[0].mimetype};base64,${files[0].buffer.toString('base64')}`;
+  }
+  const Jimp = require('jimp');
+  const images = await Promise.all(files.map(f => Jimp.read(f.buffer)));
+  const width = Math.min(...images.map(im => im.bitmap.width));
+  const resized = images.map(im => im.clone().resize(width, Jimp.AUTO));
+  const totalHeight = resized.reduce((sum, im) => sum + im.bitmap.height, 0);
+  const combined = new Jimp(width, totalHeight, 0xffffffff);
+  let y = 0;
+  for (const im of resized) {
+    combined.composite(im, 0, y);
+    y += im.bitmap.height;
+  }
+  const buffer = await combined.quality(85).getBufferAsync(Jimp.MIME_JPEG);
+  return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+}
+
 // ─── POST /api/receipts/scan ───────────────────────────────────────────────────
 async function scanReceipt(req, res) {
-  if (!req.file) return error(res, 'Immagine scontrino obbligatoria');
+  const files = req.files || (req.file ? [req.file] : []);
+  if (files.length === 0) return error(res, 'Immagine scontrino obbligatoria');
 
   // Controllo limite piano gratuito (10 scontrini/mese)
   const limitCheck = await checkReceiptLimit(req.userId);
@@ -70,13 +95,22 @@ async function scanReceipt(req, res) {
     );
   }
 
-  // Validazione MIME type
-  if (!ALLOWED_MIME.has(req.file.mimetype)) {
-    return error(res, `Formato immagine non supportato: ${req.file.mimetype}. Usa JPEG, PNG o WEBP.`);
+  // Validazione MIME type (su tutte le foto, se sono più d'una)
+  for (const f of files) {
+    if (!ALLOWED_MIME.has(f.mimetype)) {
+      return error(res, `Formato immagine non supportato: ${f.mimetype}. Usa JPEG, PNG o WEBP.`);
+    }
   }
 
-  // 1. Converti immagine in base64 (no S3 richiesto)
-  const imageBase64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+  // 1. Se sono più foto (scontrino diviso in 2-3 scatti), ricomponile in una
+  // sola immagine verticale PRIMA di passarla all'OCR.
+  let imageBase64;
+  try {
+    imageBase64 = await combineReceiptPhotos(files);
+  } catch (e) {
+    console.warn('[receipt] combineReceiptPhotos fallito, uso solo la prima foto:', e.message);
+    imageBase64 = `data:${files[0].mimetype};base64,${files[0].buffer.toString('base64')}`;
+  }
   const imageUrl = null;
 
   // 2. Crea record "processing" per feedback immediato all'utente

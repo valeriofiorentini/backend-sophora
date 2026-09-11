@@ -43,6 +43,24 @@ function uploadReceiptImage(field) {
   };
 }
 
+// Come sopra ma accetta PIÙ immagini sullo stesso campo (es. uno scontrino
+// troppo lungo per una sola foto, diviso in 2-3 scatti che vanno poi
+// ricomposti in una sola immagine prima dell'OCR).
+function uploadReceiptImages(field, maxCount = 3) {
+  return (req, res, next) => {
+    upload.array(field, maxCount)(req, res, err => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ success: false, message: 'Immagine troppo grande (max 12MB). Riprova con una foto più piccola.' });
+      }
+      if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ success: false, message: `Massimo ${maxCount} foto per scontrino.` });
+      }
+      return res.status(400).json({ success: false, message: err.message || 'Immagine non valida' });
+    });
+  };
+}
+
 async function uploadToS3(file, folder = 'uploads') {
   // Se S3 non configurato, salva sul disco locale del server
   if (!process.env.AWS_REGION || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_S3_BUCKET) {
@@ -75,4 +93,4 @@ async function deleteFromS3(url) {
   await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: key }));
 }
 
-module.exports = { upload, uploadReceiptImage, uploadToS3, deleteFromS3 };
+module.exports = { upload, uploadReceiptImage, uploadReceiptImages, uploadToS3, deleteFromS3 };

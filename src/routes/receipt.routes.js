@@ -1,13 +1,16 @@
 const router       = require('express').Router();
 const c            = require('../controllers/receipt.controller');
 const { auth }     = require('../middleware/auth');
-const { uploadReceiptImage } = require('../config/s3');
+const { uploadReceiptImages } = require('../config/s3');
 const { receiptRateLimit } = require('../middleware/rateLimit');
 const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(auth);
 
-router.post('/scan',   receiptRateLimit, uploadReceiptImage('image'), asyncHandler(c.scanReceipt));
+// Fino a 3 foto per scontrino: uno scontrino troppo lungo per uno scatto
+// solo può essere diviso in più foto (es. metà superiore + metà inferiore),
+// ricomposte in un'unica immagine prima dell'OCR (vedi receipt.controller).
+router.post('/scan',   receiptRateLimit, uploadReceiptImages('image', 3), asyncHandler(c.scanReceipt));
 router.get('/',        asyncHandler(c.getReceipts));
 router.get('/stats',          asyncHandler(c.getReceiptStats));
 router.post('/export/excel',  asyncHandler(c.exportReceiptsExcel));

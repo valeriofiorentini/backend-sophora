@@ -386,8 +386,97 @@ ${text}
   }
 }
 
+// ─── Vision pura su scontrini lunghi: split in 2 metà ────────────────────────
+// La pipeline ibrida (sopra) divide in 2 metà solo il passaggio di OCR
+// TESTUALE — l'immagine mandata al modello vision resta comunque intera.
+// Quando l'ibrida non è disponibile/fallisce e si cade sulla vision pura,
+// un'unica immagine molto alta veniva mandata in un solo colpo: i modelli
+// vision comprimono/ridimensionano internamente le immagini molto alte,
+// perdendo dettaglio proprio sul fondo (spesso dove sta il totale). Qui si
+// applica lo stesso split (già usato per l'OCR testuale) anche alla vision.
+
+/** Firma nome+prezzo per confrontare item tra le due metà. */
+function itemSignature(it) {
+  return `${String(it?.name || '').trim().toLowerCase()}|${parseFloat(it?.totalPrice)}`;
+}
+
+// Le due metà si sovrappongono ~6% al centro (vedi splitTallImage): alcuni
+// prodotti possono comparire in ENTRAMBE le letture. Confronta solo la coda
+// della metà superiore con la testa della metà inferiore (dove può esserci
+// overlap reale) invece di deduplicare sull'intero scontrino, per non perdere
+// per errore un prodotto ripetuto per davvero (es. 2 confezioni identiche).
+function dedupeSeamItems(topItems, botItems) {
+  const seam = new Set(topItems.slice(-6).map(itemSignature));
+  return botItems.filter(it => !seam.has(itemSignature(it)));
+}
+
+/** Un solo tentativo (con un fallback di modello) su UNA metà dell'immagine. */
+async function visionOcrHalf(imageB64, isTop, [modelA, modelB]) {
+  const prompt = `${RECEIPT_PROMPT}
+
+ATTENZIONE — QUESTA È SOLO UNA PORZIONE: questa immagine è la ${isTop ? 'METÀ SUPERIORE' : 'METÀ INFERIORE'} di uno scontrino lungo, fotografato/diviso in due parti che si sovrappongono leggermente al centro. Estrai SOLO i prodotti effettivamente visibili in QUESTA porzione. Se l'intestazione (negozio, indirizzo, data) o il totale finale non sono visibili qui, lasciali null: verranno presi dall'altra metà.`;
+  const messages = [{
+    role: 'user',
+    content: [
+      { type: 'text',      text: prompt },
+      { type: 'image_url', image_url: { url: imageB64, detail: 'high' } },
+    ],
+  }];
+  try {
+    const resp = await callOcrApi(modelA, messages);
+    return parseOcrJson(resp.choices[0].message.content);
+  } catch (e) {
+    console.warn(`[receipt] vision split (${isTop ? 'alto' : 'basso'}) modello primario fallito (${e.message}) → fallback`);
+    const resp = await callOcrApi(modelB, messages);
+    return parseOcrJson(resp.choices[0].message.content);
+  }
+}
+
 /**
- * Entry point unico: ibrida → vision pura con doppio modello e verifica somma.
+ * Se l'immagine è "alta" (stesso check di splitTallImage), legge le 2 metà
+ * separatamente e fonde i risultati. Ritorna null se l'immagine non è
+ * abbastanza lunga da giustificare lo split (fallback al percorso normale)
+ * o se entrambe le metà falliscono.
+ *
+ * Nota costi: qui si usa 1 modello + 1 fallback per metà (max 4 chiamate
+ * totali), NON il consensus a 3 modelli — che qui costerebbe fino a 6
+ * chiamate aggiuntive sopra a quelle già tentate dalla pipeline ibrida.
+ */
+async function runVisionSplitOcr(imageBase64, models) {
+  const halves = await splitTallImage(imageBase64).catch(e => {
+    console.warn('[receipt] split immagine (vision) fallito:', e.message);
+    return null;
+  });
+  if (!halves) return null;
+
+  console.info('[receipt] scontrino lungo → vision pura in 2 metà');
+  const [top, bot] = await Promise.all([
+    visionOcrHalf(halves[0], true, models).catch(e => { console.warn('[receipt] vision split alto fallita:', e.message); return null; }),
+    visionOcrHalf(halves[1], false, models).catch(e => { console.warn('[receipt] vision split basso fallita:', e.message); return null; }),
+  ]);
+  if (!top && !bot) return null;
+  if (!top) return bot;
+  if (!bot) return top;
+
+  const topItems = Array.isArray(top.items) ? top.items : [];
+  const botItems = dedupeSeamItems(topItems, Array.isArray(bot.items) ? bot.items : []);
+
+  return {
+    storeName:     top.storeName     ?? bot.storeName     ?? null,
+    storeChain:    top.storeChain    ?? bot.storeChain    ?? null,
+    storeAddress:  top.storeAddress  ?? bot.storeAddress  ?? null,
+    receiptDate:   top.receiptDate   ?? bot.receiptDate   ?? null,
+    paymentMethod: bot.paymentMethod ?? top.paymentMethod ?? null,
+    // Il totale stampato è quasi sempre in fondo allo scontrino (metà bassa).
+    totalAmount:   bot.totalAmount   ?? top.totalAmount   ?? null,
+    totalDiscount: bot.totalDiscount ?? top.totalDiscount ?? null,
+    items: [...topItems, ...botItems],
+  };
+}
+
+/**
+ * Entry point unico: ibrida → vision pura (split se lo scontrino è lungo,
+ * altrimenti singola immagine) con doppio modello e verifica somma.
  * Ritorna il JSON parsato dello scontrino, o lancia se ogni strategia fallisce.
  */
 async function runReceiptOcr(imageBase64) {
@@ -395,8 +484,15 @@ async function runReceiptOcr(imageBase64) {
   let parsed = await tryOcrSpacePipeline(imageBase64);
   if (parsed) return parsed;
 
-  // ── PASSO 2: vision pura con fallback su modello diverso
   const fineTunedModel = await getOcrModel(); // null = nessun fine-tuned disponibile
+  const firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
+
+  // ── PASSO 2: vision pura — se l'immagine è lunga, dividi in 2 metà
+  const splitParsed = await runVisionSplitOcr(imageBase64, [firstModel, OCR_MODEL_FALLBACK])
+    .catch(e => { console.warn('[receipt] vision split fallita, uso immagine intera:', e.message); return null; });
+  if (splitParsed) return splitParsed;
+
+  // ── PASSO 3: vision pura, immagine intera, con fallback su modello diverso
   const messages = [{
     role: 'user',
     content: [
@@ -405,7 +501,6 @@ async function runReceiptOcr(imageBase64) {
     ],
   }];
 
-  const firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
   parsed = await consensusOcr(
     messages,
     'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.',

@@ -165,6 +165,22 @@ async function scanReceipt(req, res) {
   });
   parsed.items = items;
 
+  // 3c2. Nessun prodotto riconosciuto = scan fallito, non un successo "vuoto".
+  // Prima si salvava comunque uno scontrino processed con 0 item e si
+  // assegnavano ugualmente i punti — l'utente vedeva "fatto" con la lista
+  // vuota e nessuna indicazione di riprovare con una foto migliore.
+  if (items.length === 0) {
+    await prisma.receipt.update({
+      where: { id: receipt.id },
+      data:  { status: 'error' },
+    }).catch(() => {});
+    return error(
+      res,
+      'Non siamo riusciti a leggere i prodotti dallo scontrino. Riprova con una foto più nitida, ben illuminata e dritta, evitando riflessi e pieghe.',
+      422,
+    );
+  }
+
   // 3d. RISPARMIATO: totalDiscount almeno pari alla somma degli sconti per riga.
   const itemDiscSum = items.reduce((a, i) => a + (parseFloat(i.discount) || 0), 0);
   const llmDisc = parseFloat(parsed.totalDiscount) || 0;
@@ -200,20 +216,27 @@ async function scanReceipt(req, res) {
     const dateFrom = new Date(parsed.receiptDate);
     const dateTo   = new Date(parsed.receiptDate);
     dateTo.setDate(dateTo.getDate() + 1);
+    const total = parseFloat(parsed.totalAmount);
 
-    const existing = await prisma.receipt.findFirst({
+    // Prima: match ESATTO su totalAmount e n° item. Due scan dello stesso
+    // scontrino fisico possono differire di un centesimo (arrotondamento) o
+    // di un prodotto (variabilità dell'OCR) — il duplicato non veniva mai
+    // riconosciuto, creando uno scontrino doppio con punti e dati duplicati.
+    // Ora si usa una tolleranza: ±0.05€ sul totale, ±1 sul numero di item.
+    const candidates = await prisma.receipt.findMany({
       where: {
         userId: req.userId,
         id:     { not: receipt.id },
         receiptDate: { gte: dateFrom, lt: dateTo },
-        totalAmount: parseFloat(parsed.totalAmount),
+        totalAmount: { gte: total - 0.05, lte: total + 0.05 },
         ...(parsed.storeChain ? { storeChain: parsed.storeChain } : { storeName: parsed.storeName }),
         status: 'processed',
       },
       include: { _count: { select: { items: true } } },
     });
+    const existing = candidates.find(c => Math.abs(c._count.items - items.length) <= 1);
 
-    if (existing && existing._count.items === items.length) {
+    if (existing) {
       isDuplicate = true;
       console.info(`[receipt] duplicato rilevato (id=${existing.id}) — aggiorno dati, nessun punto aggiunto`);
       await prisma.receipt.delete({ where: { id: receipt.id } }).catch(() => {});

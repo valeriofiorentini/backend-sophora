@@ -83,40 +83,54 @@ async function processFlyerAI(req, res) {
   const items = Array.isArray(parsed.items) ? parsed.items.filter(i => i.name && i.price) : [];
   const validUntil = parsed.validUntil ? new Date(parsed.validUntil) : getDefaultExpiry();
 
-  // Save to Promo table (existing)
-  const saved = [];
-  for (const item of items) {
-    const promo = await prisma.promo.create({
-      data: {
-        storeName: parsed.storeName || parsed.storeChain || 'Sconosciuto',
-        storeChain: parsed.storeChain || null,
-        productName: item.name,
-        price: item.price ? parseFloat(item.price) : null,
-        originalPrice: item.originalPrice ? parseFloat(item.originalPrice) : null,
-        discount: item.discountPercent ? `${item.discountPercent}%` : null,
-        source: 'ocr_gpt4o',
-        validUntil,
-        latitude: latitude ? parseFloat(latitude) : null,
-        longitude: longitude ? parseFloat(longitude) : null,
-      },
-    });
-    saved.push({ ...promo, category: item.category, brand: item.brand, unit: item.unit });
+  // Prima: un INSERT per item in un for..of await (N+1 — un volantino con 30
+  // prodotti faceva 30+ round-trip separati al DB). Ora si generano gli id
+  // lato applicativo (uuid, come già fa Prisma di default) e si inserisce
+  // tutto in un solo createMany per tabella.
+  const now = new Date();
+  const promoRows = items.map(item => ({
+    id: uuidv4(),
+    storeName: parsed.storeName || parsed.storeChain || 'Sconosciuto',
+    storeChain: parsed.storeChain || null,
+    productName: item.name,
+    price: item.price ? parseFloat(item.price) : null,
+    originalPrice: item.originalPrice ? parseFloat(item.originalPrice) : null,
+    discount: item.discountPercent ? `${item.discountPercent}%` : null,
+    source: 'ocr_gpt4o',
+    validUntil,
+    latitude: latitude ? parseFloat(latitude) : null,
+    longitude: longitude ? parseFloat(longitude) : null,
+    createdAt: now,
+  }));
 
-    // Alimenta PriceHistory: così i prezzi dei volantini guidano l'advisor
-    // "dove conviene" e il forecasting fin dal primo giorno (bootstrap dati).
-    if (item.price) {
-      const isOnSale = !!(item.discountPercent || (item.originalPrice && parseFloat(item.originalPrice) > parseFloat(item.price)));
-      await prisma.priceHistory.create({
-        data: {
-          productKey: normalizeProductKey(item.name),
-          storeChain: parsed.storeChain || 'Sconosciuto',
-          price:      parseFloat(item.price),
-          isOnSale,
-          salePercent: item.discountPercent ? parseFloat(item.discountPercent) : null,
-          source:     'flyer_ocr',
-        },
-      }).catch(() => {}); // ignora duplicati
-    }
+  if (promoRows.length) {
+    await prisma.promo.createMany({ data: promoRows });
+  }
+
+  const saved = promoRows.map((row, i) => ({
+    ...row,
+    category: items[i].category,
+    brand: items[i].brand,
+    unit: items[i].unit,
+  }));
+
+  // Alimenta PriceHistory: così i prezzi dei volantini guidano l'advisor
+  // "dove conviene" e il forecasting fin dal primo giorno (bootstrap dati).
+  const priceHistoryRows = items
+    .filter(item => item.price)
+    .map(item => ({
+      productKey: normalizeProductKey(item.name),
+      storeChain: parsed.storeChain || 'Sconosciuto',
+      price:      parseFloat(item.price),
+      isOnSale:   !!(item.discountPercent || (item.originalPrice && parseFloat(item.originalPrice) > parseFloat(item.price))),
+      salePercent: item.discountPercent ? parseFloat(item.discountPercent) : null,
+      source:     'flyer_ocr',
+    }));
+
+  if (priceHistoryRows.length) {
+    // Batch unico invece di N insert singoli; resta non bloccante come prima
+    // (un errore qui non deve far fallire il salvataggio dei promo).
+    await prisma.priceHistory.createMany({ data: priceHistoryRows }).catch(() => {});
   }
 
   // Index in Qdrant asynchronously (don't block response)

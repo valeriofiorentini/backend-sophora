@@ -1,6 +1,6 @@
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
-const { awardPoints } = require('./gamification.controller');
+const { awardPoints } = require('../services/gamification.service');
 const { sendMonthlyReportEmail } = require('../utils/email');
 const { uploadToS3 } = require('../config/s3');
 const { generateReportHtml } = require('../templates/reportHtml');

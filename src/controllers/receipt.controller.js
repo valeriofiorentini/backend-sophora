@@ -12,7 +12,7 @@
 
 const prisma  = require('../config/database');
 const { success, error } = require('../utils/response');
-const { awardPoints }    = require('./gamification.controller');
+const { awardPoints }    = require('../services/gamification.service');
 const { checkReceiptLimit } = require('../utils/planLimits');
 const { runReceiptOcr }  = require('../services/receiptOcr.service');
 const { populatePantryFromReceipt, VALID_CATEGORIES } = require('../services/pantrySync.service');

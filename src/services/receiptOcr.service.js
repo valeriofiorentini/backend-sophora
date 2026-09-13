@@ -490,7 +490,17 @@ async function runReceiptOcr(imageBase64) {
   // ── PASSO 2: vision pura — se l'immagine è lunga, dividi in 2 metà
   const splitParsed = await runVisionSplitOcr(imageBase64, [firstModel, OCR_MODEL_FALLBACK])
     .catch(e => { console.warn('[receipt] vision split fallita, uso immagine intera:', e.message); return null; });
-  if (splitParsed) return splitParsed;
+
+  // Accetta subito lo split SOLO se riconcilia (somma righe ≈ totale) — prima
+  // veniva accettato a prescindere, quindi una fusione imprecisa tra le 2
+  // metà (es. un prodotto perso/duplicato sulla cucitura) non aveva un
+  // secondo tentativo. Se non torna, si passa al consensus a 3 modelli
+  // sull'immagine intera (passo 3) come già succedeva per gli scontrini corti.
+  const splitDiff = splitParsed ? diffRatio(splitParsed) : 1;
+  if (splitParsed && splitDiff <= MISMATCH_THRESHOLD) return splitParsed;
+  if (splitParsed) {
+    console.warn(`[receipt] vision split non riconcilia (diff=${(splitDiff * 100).toFixed(1)}%) → tentativo con consensus a 3 modelli su immagine intera`);
+  }
 
   // ── PASSO 3: vision pura, immagine intera, con fallback su modello diverso
   const messages = [{
@@ -506,6 +516,14 @@ async function runReceiptOcr(imageBase64) {
     'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.',
     [firstModel, OCR_MODEL_FALLBACK, OCR_MODEL_THIRD],
   );
+
+  // Nessuno dei due percorsi riconcilia perfettamente: tieni il migliore dei
+  // due invece di scartare a priori il tentativo split (che aveva comunque
+  // il vantaggio di "vedere" ogni metà a piena risoluzione).
+  if (splitParsed && diffRatio(parsed) > splitDiff) {
+    console.warn('[receipt] consensus su immagine intera peggiore dello split → uso comunque lo split');
+    return splitParsed;
+  }
   return parsed;
 }
 

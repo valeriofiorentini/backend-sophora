@@ -362,35 +362,53 @@ async function purchaseVoucher(req, res) {
   const code       = generateVoucherCode();
   const expiresAt  = new Date(Date.now() + template.validDays * 86_400_000);
 
-  // Transazione atomica: scala punti + crea voucher in un'unica operazione
-  const [,, voucher] = await prisma.$transaction([
-    prisma.userLevel.update({
-      where: { userId: req.userId },
-      data:  { totalPoints: newBalance },
-    }),
-    prisma.pointsTransaction.create({
-      data: {
-        userId:  req.userId,
-        delta:   -template.pointsCost,
-        action:  'voucher_redeem',
-        balance: newBalance,
-      },
-    }),
-    prisma.voucher.create({
-      data: {
-        userId:      req.userId,
-        code,
-        type:        template.type,
-        value:       template.value,
-        description: template.description,
-        storeChain:  template.storeChain ?? null,
-        pointsCost:  template.pointsCost,
-        expiresAt,
-        status:      'redeemed',
-        redeemedAt:  new Date(),
-      },
-    }),
-  ]);
+  // FIX TOCTOU (stesso pattern di useVoucher): tra la findUnique sopra e
+  // questo update un'altra richiesta concorrente (doppio tap, due device)
+  // poteva leggere lo stesso saldo e comprare un secondo voucher con gli
+  // stessi punti — updateMany con guardia su totalPoints è atomico: se il
+  // saldo è cambiato nel frattempo count è 0 e annulliamo la transazione.
+  let voucher;
+  try {
+    [, , voucher] = await prisma.$transaction(async tx => {
+      const guarded = await tx.userLevel.updateMany({
+        where: { userId: req.userId, totalPoints: ul.totalPoints },
+        data:  { totalPoints: newBalance },
+      });
+      if (guarded.count === 0) {
+        throw new Error('POINTS_CHANGED');
+      }
+      return Promise.all([
+        guarded,
+        tx.pointsTransaction.create({
+          data: {
+            userId:  req.userId,
+            delta:   -template.pointsCost,
+            action:  'voucher_redeem',
+            balance: newBalance,
+          },
+        }),
+        tx.voucher.create({
+          data: {
+            userId:      req.userId,
+            code,
+            type:        template.type,
+            value:       template.value,
+            description: template.description,
+            storeChain:  template.storeChain ?? null,
+            pointsCost:  template.pointsCost,
+            expiresAt,
+            status:      'redeemed',
+            redeemedAt:  new Date(),
+          },
+        }),
+      ]);
+    });
+  } catch (err) {
+    if (err.message === 'POINTS_CHANGED') {
+      return error(res, 'Saldo punti cambiato, riprova.', 409);
+    }
+    throw err;
+  }
 
   // Invalida cache leaderboard (punti cambiati)
   await redis.del('leaderboard:top20').catch(() => {});

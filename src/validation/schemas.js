@@ -246,6 +246,92 @@ const cartUpdateSchema = z.object({
   quantity:  z.coerce.number().int().min(0).max(999),
 }).passthrough();
 
+// ─── Store / Product (query string — prima nessuna validazione: un radius o
+// una coordinata malformata finiva in parseFloat → NaN, risposte vuote/
+// silenziose invece di un 400 chiaro) ──────────────────────────────────────
+const storeLocationQuerySchema = z.object({
+  a:         optStr(2000), // location JSON stringificata (vedi controller)
+  latitude:  optNum(-90, 90),
+  longitude: optNum(-180, 180),
+  radius:    optNum(0.1, 500),
+  filter:    z.preprocess(empty, z.enum(['price', 'promotions', 'distance']).optional()),
+}).passthrough()
+  .refine(d => d.a || (d.latitude !== undefined && d.longitude !== undefined), {
+    message: 'Posizione obbligatoria (a oppure latitude+longitude)',
+  });
+
+const nearbyStoresQuerySchema = z.object({
+  long:      optNum(-180, 180),
+  lat:       optNum(-90, 90),
+  latitude:  optNum(-90, 90),
+  longitude: optNum(-180, 180),
+}).passthrough();
+
+const productListQuerySchema = z.object({
+  search:  optStr(200),
+  category: optStr(60),
+  onSale:  optStr(10), // confrontato letteralmente a 'true' nel controller
+}).passthrough();
+
+// ─── Promo ────────────────────────────────────────────────────────────────────
+const promoQuerySchema = z.object({
+  latitude:  optNum(-90, 90),
+  longitude: optNum(-180, 180),
+  chain:     optStr(100),
+  radius:    optNum(0.1, 500),
+  page:      optNum(1, 10_000),
+  limit:     optNum(1, 100),
+}).passthrough();
+
+// ─── Forecast (proxy verso ML service) ────────────────────────────────────────
+const forecastPriceQuerySchema = z.object({
+  productKey: reqStr(200),
+  storeChain: optStr(100),
+  daysAhead:  optNum(1, 365),
+}).passthrough();
+
+const forecastCompetitorQuerySchema = z.object({
+  productKey: reqStr(200),
+  chains:     optStr(500), // CSV, es. "Lidl,Eurospin,Conad"
+}).passthrough();
+
+// ─── Geo ──────────────────────────────────────────────────────────────────────
+const geoSearchCitySchema = z.object({
+  q: reqStr(200),
+}).passthrough();
+
+// ─── Flyer / OCR ──────────────────────────────────────────────────────────────
+const flyerScanBodySchema = z.object({
+  latitude:  optNum(-90, 90),
+  longitude: optNum(-180, 180),
+}).passthrough();
+
+const flyerSearchQuerySchema = z.object({
+  q:          optStr(200),
+  storeChain: optStr(100),
+  lat:        optNum(-90, 90),
+  lon:        optNum(-180, 180),
+}).passthrough();
+
+const flyerPriceHistoryQuerySchema = z.object({
+  productKey: reqStr(200),
+  storeChain: optStr(100),
+}).passthrough();
+
+const ocrFlyerBodySchema = z.object({
+  storeName:  optStr(200),
+  storeChain: optStr(100),
+  latitude:   optNum(-90, 90),
+  longitude:  optNum(-180, 180),
+}).passthrough();
+
+// ─── Ricevute ─────────────────────────────────────────────────────────────────
+const receiptListQuerySchema = z.object({
+  page:   optNum(1, 10_000),
+  limit:  optNum(1, 50),
+  months: optNum(1, 120),
+}).passthrough();
+
 module.exports = {
   signupSchema,
   loginSchema,
@@ -272,4 +358,16 @@ module.exports = {
   chatMessageSchema,
   cartAddSchema,
   cartUpdateSchema,
+  storeLocationQuerySchema,
+  nearbyStoresQuerySchema,
+  productListQuerySchema,
+  promoQuerySchema,
+  forecastPriceQuerySchema,
+  forecastCompetitorQuerySchema,
+  geoSearchCitySchema,
+  flyerScanBodySchema,
+  flyerSearchQuerySchema,
+  flyerPriceHistoryQuerySchema,
+  ocrFlyerBodySchema,
+  receiptListQuerySchema,
 };

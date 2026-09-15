@@ -123,8 +123,9 @@ async function getBasketAdvice(req, res) {
     return success(res, {
       basket: [],
       chains: [],
-      message: 'Scansiona qualche scontrino per ricevere consigli sulla tua spesa. ' +
-               `Servono almeno ${MIN_PURCHASES} acquisti dello stesso prodotto negli ultimi ${BASKET_WINDOW_DAYS} giorni.`,
+      // testo composto lato client (i18n): minPurchases/windowDays bastano a ricostruire il messaggio
+      minPurchases: MIN_PURCHASES,
+      windowDays: BASKET_WINDOW_DAYS,
     });
   }
 
@@ -214,20 +215,22 @@ async function getBasketAdvice(req, res) {
   // Ordina per risparmio per spesa decrescente (Opzione A)
   chains.sort((a, b) => b.savingPerTrip - a.savingPerTrip);
 
+  // Testo del messaggio composto lato client (i18n): esponiamo solo i dati
+  // strutturati della catena migliore, già presenti anche in `chains`.
   const best = chains.find(ch => ch.savingPerTrip > 0);
-  const message = best
-    ? `Facendo la spesa da ${best.chain} risparmieresti circa €${best.savingPerTrip.toFixed(2)} a spesa ` +
-      `(circa €${best.estimatedSaving.toFixed(2)} totali negli ultimi ${BASKET_WINDOW_DAYS} giorni) ` +
-      `sui ${best.coveredProducts} prodotti confrontabili della tua spesa tipo.`
-    : 'Stai già facendo la spesa nelle catene più convenienti per i tuoi prodotti, ' +
-      'oppure non ci sono ancora abbastanza dati di confronto.';
+  const bestChain = best ? {
+    chain:           best.chain,
+    savingPerTrip:   best.savingPerTrip,
+    estimatedSaving: best.estimatedSaving,
+    coveredProducts: best.coveredProducts,
+  } : null;
 
   return success(res, {
     windowDays:  BASKET_WINDOW_DAYS,
     basketSize:  basket.length,
     basket:      basket.map(({ chains: _c, ...b }) => b), // chains interno non serve al client
     chains,
-    message,
+    bestChain,
   });
 }
 
@@ -421,8 +424,7 @@ async function getHealthAdvice(req, res) {
                                + (spendByCat.get('bevande_zucch') || 0)
                                + (spendByCat.get('alcolici') || 0)) / macroBase * 100),
     method: 'spend_weighted',
-    note:   'Stima basata sulla composizione della spesa, non su grammature reali. ' +
-            'Indica gli sbilanciamenti, non i grammi esatti.',
+    // nota descrittiva statica: composta lato client (i18n), vedi macroNote in advisor screen
   } : null;
 
   // Consigli macro

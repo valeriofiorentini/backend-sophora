@@ -308,8 +308,11 @@ model Notification {
 model Subscription {
   id                   String    @id @default(uuid())
   userId               String    @unique
+  provider             String    @default("stripe") // "stripe" | "apple"
   stripeCustomerId     String?
   stripeSubscriptionId String?
+  appleOriginalTransactionId String? @unique
+  appleProductId       String?
   status               String    @default("inactive")
   currentPeriodEnd     DateTime?
   createdAt            DateTime  @default(now())

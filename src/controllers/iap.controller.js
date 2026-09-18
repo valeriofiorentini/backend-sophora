@@ -17,6 +17,7 @@
 
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
+const { verifyAppleJWS } = require('../utils/appleJws');
 
 const APPLE_PROD_URL    = 'https://buy.itunes.apple.com/verifyReceipt';
 const APPLE_SANDBOX_URL = 'https://sandbox.itunes.apple.com/verifyReceipt';
@@ -102,22 +103,34 @@ async function verifyReceipt(req, res) {
 }
 
 // ─── POST /api/iap/apple-notifications ───────────────────────────────────────
-// Apple Server Notifications V2 — nessuna autenticazione utente (chiamata da Apple),
-// il payload è un JWS firmato da Apple; qui ci limitiamo a decodificarlo senza
-// verificarne la firma crittografica completa (TODO: verificare con le chiavi
-// pubbliche Apple prima di andare in produzione con volumi reali).
+// Apple Server Notifications V2 — nessuna autenticazione utente (chiamata da Apple).
+// Il payload e il signedTransactionInfo al suo interno sono entrambi JWS firmati
+// da Apple: verifichiamo la firma e la catena di certificati fino alla Apple
+// Root CA G3 prima di fidarci del contenuto, altrimenti chiunque potrebbe
+// forgiare una notifica di rinnovo e ottenere l'abbonamento gratis.
 async function handleAppleNotification(req, res) {
   try {
     const signedPayload = req.body.signedPayload;
     if (!signedPayload) return res.status(400).send('missing signedPayload');
 
-    const payloadBase64 = signedPayload.split('.')[1];
-    const payload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf8'));
+    let payload;
+    try {
+      payload = await verifyAppleJWS(signedPayload);
+    } catch (verifyErr) {
+      console.warn('[iap] notifica Apple con firma non valida, scartata:', verifyErr.message);
+      return res.status(400).send('invalid signature');
+    }
 
-    const dataBase64 = payload.data?.signedTransactionInfo?.split('.')[1];
-    if (!dataBase64) return res.status(200).send('ok'); // notifica senza dati transazione, ignora
+    const signedTransactionInfo = payload.data?.signedTransactionInfo;
+    if (!signedTransactionInfo) return res.status(200).send('ok'); // notifica senza dati transazione, ignora
 
-    const tx = JSON.parse(Buffer.from(dataBase64, 'base64').toString('utf8'));
+    let tx;
+    try {
+      tx = await verifyAppleJWS(signedTransactionInfo);
+    } catch (verifyErr) {
+      console.warn('[iap] signedTransactionInfo con firma non valida, scartato:', verifyErr.message);
+      return res.status(400).send('invalid signature');
+    }
     const originalTransactionId = tx.originalTransactionId;
     const expiresAt = tx.expiresDate ? new Date(Number(tx.expiresDate)) : null;
     const isActive  = expiresAt ? expiresAt.getTime() > Date.now() : false;

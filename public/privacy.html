@@ -1,0 +1,336 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Shopora Privacy Policy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FBF8F4;
+    --surface: #FFFFFF;
+    --border: #E9E2D8;
+    --ink: #2A2420;
+    --ink-soft: #6B6058;
+    --accent: #E8630C;
+    --accent-soft: #FDEEE1;
+    --accent-ink: #7A3200;
+    --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --font-body: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1B1815;
+      --surface: #242019;
+      --border: #3A332B;
+      --ink: #F2EDE6;
+      --ink-soft: #B3A99C;
+      --accent: #FF8A3D;
+      --accent-soft: #3A2618;
+      --accent-ink: #FFC79B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1B1815;
+    --surface: #242019;
+    --border: #3A332B;
+    --ink: #F2EDE6;
+    --ink-soft: #B3A99C;
+    --accent: #FF8A3D;
+    --accent-soft: #3A2618;
+    --accent-ink: #FFC79B;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.65;
+    padding: 0 20px;
+  }
+
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding-block: 48px 96px;
+  }
+
+  header.hero {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+
+  .badge {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+
+  .hero-text h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: clamp(26px, 4vw, 32px);
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .hero-text .sub {
+    color: var(--ink-soft);
+    font-size: 14px;
+    margin-top: 2px;
+  }
+
+  .updated {
+    display: inline-block;
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+
+  .lede {
+    margin-top: 22px;
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 60ch;
+  }
+
+  nav.toc {
+    margin-top: 32px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  nav.toc a {
+    font-size: 13px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+  }
+  nav.toc a:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  section {
+    margin-top: 44px;
+    scroll-margin-top: 20px;
+  }
+
+  section h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 21px;
+    margin: 0 0 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  section h2 .num {
+    font-size: 13px;
+    color: var(--accent);
+    font-family: var(--font-body);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  section p, section li {
+    color: var(--ink);
+    max-width: 68ch;
+  }
+  section p + p { margin-top: 12px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px 20px;
+    margin-top: 14px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 14px;
+    font-size: 14.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  ul.plain { margin: 10px 0 0; padding-left: 20px; }
+  ul.plain li { margin-bottom: 6px; }
+
+  .contact-card {
+    background: var(--accent-soft);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 22px;
+    margin-top: 16px;
+  }
+  .contact-card a {
+    color: var(--accent-ink);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .contact-card a:hover { text-decoration: underline; }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+
+  @media (max-width: 460px) {
+    .wrap { padding-block: 32px 64px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="badge">S</div>
+    <div class="hero-text">
+      <h1>Shopora — Informativa sulla Privacy</h1>
+      <div class="sub">Valerio Fiorentini · App per la spesa intelligente</div>
+    </div>
+  </header>
+
+  <span class="updated">Ultimo aggiornamento: 16 settembre 2026</span>
+
+  <p class="lede">Questa informativa spiega quali dati raccoglie Shopora, perché li raccoglie e quali diritti hai. È scritta per essere letta, non solo pubblicata.</p>
+
+  <nav class="toc">
+    <a href="#titolare">Titolare</a>
+    <a href="#dati">Dati raccolti</a>
+    <a href="#finalita">Come li usiamo</a>
+    <a href="#terze-parti">Servizi terzi</a>
+    <a href="#conservazione">Conservazione</a>
+    <a href="#diritti">I tuoi diritti</a>
+    <a href="#minori">Minori</a>
+    <a href="#modifiche">Modifiche</a>
+    <a href="#contatti">Contatti</a>
+  </nav>
+
+  <section id="titolare">
+    <h2><span class="num">01</span> Titolare del trattamento</h2>
+    <p>Il titolare del trattamento dei dati raccolti tramite l'app Shopora è <strong>Valerio Fiorentini</strong>, sviluppatore indipendente dell'applicazione. Per qualsiasi richiesta relativa ai tuoi dati personali, puoi scrivere a <a href="mailto:sophorainformazioni@gmail.com">sophorainformazioni@gmail.com</a>.</p>
+  </section>
+
+  <section id="dati">
+    <h2><span class="num">02</span> Quali dati raccogliamo</h2>
+    <p>Raccogliamo solo i dati necessari a far funzionare le funzionalità che usi attivamente. Ecco un elenco onesto, funzione per funzione:</p>
+    <table>
+      <thead>
+        <tr><th>Categoria</th><th>Esempio</th><th>Quando</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Dati account</td><td>Email, nome utente, password (o accesso tramite Google)</td><td>Alla registrazione</td></tr>
+        <tr><td>Posizione</td><td>Coordinate GPS approssimative/precise</td><td>Solo se attivi "Offerte vicino a te" o la ricerca supermercati</td></tr>
+        <tr><td>Fotocamera e galleria</td><td>Foto di scontrini, volantini, dispensa, prodotti</td><td>Quando usi scanner scontrino, volantino, dispensa o codice a barre</td></tr>
+        <tr><td>Dati di spesa</td><td>Prodotti, prezzi, negozi estratti dagli scontrini</td><td>Dopo ogni scansione, per storico spese e confronto prezzi</td></tr>
+        <tr><td>Contatti (opzionale)</td><td>Accesso alla rubrica</td><td>Solo se scegli di invitare qualcuno a un gruppo spesa</td></tr>
+        <tr><td>Microfono (sperimentale)</td><td>Comandi vocali</td><td>Solo se usi l'assistente vocale</td></tr>
+        <tr><td>Dati di pagamento</td><td>Gestiti interamente da Stripe</td><td>Solo se attivi l'abbonamento Premium — Shopora non vede né conserva i dati della carta</td></tr>
+        <tr><td>Dati diagnostici</td><td>Crash log, eventi d'uso anonimi</td><td>Sempre, per migliorare stabilità e prestazioni</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="finalita">
+    <h2><span class="num">03</span> Come usiamo i tuoi dati</h2>
+    <ul class="plain">
+      <li>Far funzionare le funzioni che chiedi esplicitamente (scansione, confronto prezzi, liste condivise, previsioni).</li>
+      <li>Mostrarti offerte e supermercati vicino alla tua posizione, quando la condividi.</li>
+      <li>Contribuire in forma <strong>anonima e aggregata</strong> (mai riconducibile a te) al database prezzi condiviso usato per confronti tra catene e previsioni — puoi disattivarlo in qualsiasi momento dalle Impostazioni.</li>
+      <li>Inviarti notifiche che hai scelto di ricevere (offerte, promemoria, aggiornamenti gruppo).</li>
+      <li>Individuare e correggere bug tramite log diagnostici anonimi.</li>
+      <li>Gestire l'abbonamento Premium tramite il nostro fornitore di pagamenti.</li>
+    </ul>
+    <p>Non vendiamo i tuoi dati personali a nessuno, mai.</p>
+  </section>
+
+  <section id="terze-parti">
+    <h2><span class="num">04</span> Servizi di terze parti</h2>
+    <p>Shopora si appoggia a un numero minimo di fornitori esterni, ciascuno con il proprio ruolo specifico:</p>
+    <div class="card">
+      <ul class="plain">
+        <li><strong>Google Firebase</strong> — autenticazione, notifiche push, analisi d'uso anonima e rilevamento crash.</li>
+        <li><strong>Google Sign-In</strong> — solo se scegli di accedere con il tuo account Google, al posto di email e password.</li>
+        <li><strong>Stripe</strong> — elaborazione sicura dei pagamenti per l'abbonamento Premium. Shopora non riceve né conserva i dati della tua carta.</li>
+      </ul>
+    </div>
+    <p>Ognuno di questi servizi tratta i dati secondo la propria informativa privacy, che ti invitiamo a consultare se vuoi approfondire.</p>
+  </section>
+
+  <section id="conservazione">
+    <h2><span class="num">05</span> Per quanto tempo conserviamo i dati</h2>
+    <p>Conserviamo i tuoi dati finché il tuo account resta attivo. Se elimini l'account dalla schermata Impostazioni, <strong>tutti i tuoi dati personali vengono cancellati definitivamente e immediatamente</strong> — scontrini, dispensa, punti, gruppi e post inclusi (art. 17 GDPR, diritto alla cancellazione). L'operazione non è reversibile.</p>
+  </section>
+
+  <section id="diritti">
+    <h2><span class="num">06</span> I tuoi diritti</h2>
+    <p>In quanto utente europeo, hai diritto a:</p>
+    <ul class="plain">
+      <li>Accedere ai dati personali che conserviamo su di te.</li>
+      <li>Chiederne la correzione, se inesatti.</li>
+      <li>Chiederne la cancellazione (puoi farlo tu stesso dall'app, in autonomia, in qualsiasi momento).</li>
+      <li>Opporti al trattamento per finalità di miglioramento del servizio.</li>
+      <li>Revocare il consenso alla condivisione anonima dei dati di prezzo, dalle Impostazioni.</li>
+    </ul>
+    <p>Per esercitare uno di questi diritti, scrivici semplicemente all'indirizzo indicato in fondo alla pagina.</p>
+  </section>
+
+  <section id="minori">
+    <h2><span class="num">07</span> Minori</h2>
+    <p>Shopora non è rivolta a minori di 16 anni e non raccogliamo consapevolmente dati di minori. Se ritieni che un minore ci abbia fornito dati personali, contattaci per la rimozione immediata.</p>
+  </section>
+
+  <section id="modifiche">
+    <h2><span class="num">08</span> Modifiche a questa informativa</h2>
+    <p>Se aggiorneremo questa informativa in modo sostanziale, te lo comunicheremo tramite l'app prima che le modifiche entrino in vigore. La data in cima alla pagina indica sempre l'ultimo aggiornamento.</p>
+  </section>
+
+  <section id="contatti">
+    <h2><span class="num">09</span> Contatti</h2>
+    <div class="contact-card">
+      Domande, richieste o dubbi su questa informativa? Scrivi direttamente a<br>
+      <a href="mailto:sophorainformazioni@gmail.com">sophorainformazioni@gmail.com</a>
+    </div>
+  </section>
+
+  <footer>
+    Shopora — questa informativa è redatta in buona fede sulla base delle funzionalità effettive dell'app. Per usi commerciali su larga scala o requisiti legali specifici del tuo paese, si consiglia una revisione da parte di un legale.
+  </footer>
+</div>
+
+</body></html>

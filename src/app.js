@@ -45,6 +45,8 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Privacy policy pubblica (link usato in Play Console / App Store Connect)
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, '../public/privacy.html')));
+// Istruzioni eliminazione account (richiesto da Google Play "Sicurezza dei dati")
+app.get('/delete-account', (req, res) => res.sendFile(path.join(__dirname, '../public/delete-account.html')));
 
 // Express dietro un reverse proxy (Railway/Render/Nginx): necessario per ottenere
 // l'IP reale del client (rate limit) e per il corretto funzionamento di HTTPS.

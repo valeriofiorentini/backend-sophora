@@ -46,6 +46,11 @@ router.patch('/changePasswordByOldPassword', changePasswordLimit, asyncHandler(c
 router.delete('/delete-account',                               asyncHandler(c.deleteAccount));
 router.post('/logout',                                         asyncHandler(c.logout));
 
+// Blocco utenti nel feed community (report + block richiesti insieme da Apple/Google)
+router.get('/blocked',           asyncHandler(c.getBlockedUsers));
+router.post('/:id/block',        asyncHandler(c.blockUser));
+router.delete('/:id/block',      asyncHandler(c.unblockUser));
+
 // FCM token (+ posizione opzionale per le offerte vicine)
 router.post('/fcm-token', validate(fcmTokenSchema), asyncHandler(async (req, res) => {
   const { fcmToken, latitude, longitude } = req.body;

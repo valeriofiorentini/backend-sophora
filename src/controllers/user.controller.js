@@ -592,6 +592,45 @@ async function searchUsers(req, res) {
   return success(res, { users });
 }
 
+// ─── POST /api/user/:id/block ────────────────────────────────────────────────
+// Blocco utenti nel feed community — richiesto da Apple/Google insieme alla
+// segnalazione per le app con contenuti generati dagli utenti (guideline 1.2).
+// Monodirezionale: chi blocca non vede più i post del bloccato; il bloccato
+// può ancora vedere i propri.
+async function blockUser(req, res) {
+  const blockedId = req.params.id;
+  if (blockedId === req.userId) return error(res, 'Non puoi bloccare te stesso', 400);
+
+  const target = await prisma.user.findUnique({ where: { id: blockedId }, select: { id: true } });
+  if (!target) return error(res, 'Utente non trovato', 404);
+
+  await prisma.blockedUser.upsert({
+    where: { blockerId_blockedId: { blockerId: req.userId, blockedId } },
+    update: {},
+    create: { blockerId: req.userId, blockedId },
+  });
+
+  return success(res, { message: 'Utente bloccato' });
+}
+
+// ─── DELETE /api/user/:id/block ──────────────────────────────────────────────
+async function unblockUser(req, res) {
+  await prisma.blockedUser.deleteMany({
+    where: { blockerId: req.userId, blockedId: req.params.id },
+  });
+  return success(res, { message: 'Utente sbloccato' });
+}
+
+// ─── GET /api/user/blocked ────────────────────────────────────────────────────
+async function getBlockedUsers(req, res) {
+  const rows = await prisma.blockedUser.findMany({
+    where: { blockerId: req.userId },
+    include: { blocked: { select: { id: true, name: true, surname: true, username: true, avatar: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return success(res, { users: rows.map(r => r.blocked) });
+}
+
 module.exports = {
   signup,
   login,
@@ -610,4 +649,7 @@ module.exports = {
   deleteAccount,
   getAllUsers,
   searchUsers,
+  blockUser,
+  unblockUser,
+  getBlockedUsers,
 };

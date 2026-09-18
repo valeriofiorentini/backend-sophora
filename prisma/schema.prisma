@@ -100,6 +100,8 @@ model User {
   pointsTransactions   PointsTransaction[]
   fineTuningSamples    FineTuningSample[]
   pantryItems          PantryItem[]
+  blockedUsers         BlockedUser[] @relation("BlockerRelation")
+  blockedByUsers        BlockedUser[] @relation("BlockedRelation")
 }
 
 model Otp {
@@ -303,6 +305,23 @@ model Favourite {
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   @@unique([userId, storeId])
+}
+
+// Blocco utenti nel feed community — richiesto da Apple/Google (policy UGC)
+// insieme alla segnalazione: chi blocca non vede più i post dell'utente
+// bloccato. Volutamente monodirezionale (il bloccato può ancora vedere i
+// post di chi lo ha bloccato, come su la maggior parte delle app social).
+model BlockedUser {
+  id        String   @id @default(uuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("BlockerRelation", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlockedRelation", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
 }
 
 model Notification {

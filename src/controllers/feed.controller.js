@@ -11,10 +11,19 @@ async function getFeeds(req, res) {
   // type è un enum nel DB: valori sconosciuti vengono ignorati (niente 500)
   const validType = ['review', 'discount'].includes(type) ? type : undefined;
 
+  // Non mostrare i post di utenti che l'utente corrente ha bloccato
+  // (guideline 1.2 Apple/Google: block va sempre applicato insieme al report)
+  const blocked = await prisma.blockedUser.findMany({
+    where: { blockerId: req.userId },
+    select: { blockedId: true },
+  });
+  const blockedIds = blocked.map(b => b.blockedId);
+
   const feeds = await prisma.feed.findMany({
     where: {
       isApproved: true,
       ...(validType && { type: validType }),
+      ...(blockedIds.length > 0 && { userId: { notIn: blockedIds } }),
     },
     include: { user: { select: { id: true, name: true, avatar: true } } },
     orderBy: { createdAt: 'desc' },

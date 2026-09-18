@@ -2,6 +2,7 @@ const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { uploadToS3 } = require('../config/s3');
 const { processDiscountPost } = require('../services/communityPromo.service');
+const { checkImageSafety } = require('../services/imageModeration.service');
 
 async function getFeeds(req, res) {
   const { type, page = 1, limit = 20 } = req.query;
@@ -55,6 +56,18 @@ async function createFeed(req, res) {
   if (files.length > 0) {
     const urls = await Promise.all(files.map(f => uploadToS3(f, 'feeds')));
     const valid = urls.filter(Boolean);
+
+    // Controllo automatico di sicurezza PRIMA di pubblicare: il post diventa
+    // visibile pubblicamente ad altri utenti, va filtrato per nudità/violenza/
+    // contenuti illegali richiesto dalle policy Google Play e App Store per
+    // le app con contenuti generati dagli utenti.
+    for (const url of valid) {
+      const { safe, reason } = await checkImageSafety(url);
+      if (!safe) {
+        return error(res, `Immagine non pubblicabile: ${reason}`, 422);
+      }
+    }
+
     image = valid.length === 1 ? valid[0] : valid.length > 1 ? JSON.stringify(valid) : null;
   }
 
@@ -120,4 +133,85 @@ async function deleteFeed(req, res) {
   return success(res, { message: 'Post eliminato' });
 }
 
-module.exports = { getFeeds, createFeed, updateFeed, deleteFeed };
+// ─── POST /api/feeds/:id/report ──────────────────────────────────────────────
+// Nasconde subito il post (isApproved=false) in attesa di revisione admin:
+// meglio nascondere un post legittimo per errore che lasciare online per ore
+// un contenuto segnalato come inappropriato.
+async function reportFeed(req, res) {
+  const feed = await prisma.feed.findUnique({ where: { id: req.params.id } });
+  if (!feed) return error(res, 'Post non trovato', 404);
+
+  await prisma.$transaction([
+    prisma.feedReport.create({
+      data: {
+        feedId: req.params.id,
+        reporterId: req.userId,
+        reason: req.body?.reason || null,
+      },
+    }),
+    prisma.feed.update({
+      where: { id: req.params.id },
+      data: { isApproved: false },
+    }),
+  ]);
+
+  return success(res, { message: 'Segnalazione ricevuta, il post è stato nascosto in attesa di revisione' });
+}
+
+// ─── GET /api/feeds/admin/reported ────────────────────────────────────────────
+async function getReportedFeeds(req, res) {
+  const reports = await prisma.feedReport.findMany({
+    where: { status: 'pending' },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const feedIds = [...new Set(reports.map(r => r.feedId))];
+  const feeds = await prisma.feed.findMany({
+    where: { id: { in: feedIds } },
+    include: { user: { select: { id: true, name: true, email: true } } },
+  });
+  const feedById = Object.fromEntries(feeds.map(f => [f.id, f]));
+
+  return success(res, {
+    reports: reports.map(r => ({ ...r, feed: feedById[r.feedId] || null })),
+  });
+}
+
+// ─── POST /api/feeds/admin/:reportId/resolve ─────────────────────────────────
+// body: { action: 'approve' | 'reject' }
+//  approve → il post era legittimo, si riattiva (isApproved=true)
+//  reject  → il post viene eliminato definitivamente
+async function resolveReport(req, res) {
+  const { action } = req.body;
+  if (!['approve', 'reject'].includes(action)) {
+    return error(res, "action deve essere 'approve' o 'reject'", 400);
+  }
+
+  const report = await prisma.feedReport.findUnique({ where: { id: req.params.reportId } });
+  if (!report) return error(res, 'Segnalazione non trovata', 404);
+
+  if (action === 'approve') {
+    await prisma.$transaction([
+      prisma.feedReport.update({ where: { id: report.id }, data: { status: 'approved' } }),
+      prisma.feed.update({ where: { id: report.feedId }, data: { isApproved: true } }),
+    ]);
+  } else {
+    await prisma.$transaction([
+      prisma.feedReport.update({ where: { id: report.id }, data: { status: 'rejected' } }),
+      prisma.promo.deleteMany({ where: { feedId: report.feedId } }),
+      prisma.feed.delete({ where: { id: report.feedId } }).catch(() => {}), // già eliminato da un'altra risoluzione
+    ]);
+  }
+
+  return success(res, { message: 'Segnalazione risolta' });
+}
+
+module.exports = {
+  getFeeds,
+  createFeed,
+  updateFeed,
+  deleteFeed,
+  reportFeed,
+  getReportedFeeds,
+  resolveReport,
+};

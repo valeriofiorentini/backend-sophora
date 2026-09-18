@@ -282,6 +282,18 @@ model Feed {
   @@index([latitude, longitude])
 }
 
+model FeedReport {
+  id         String   @id @default(uuid())
+  feedId     String
+  reporterId String
+  reason     String?
+  status     String   @default("pending") // "pending" | "approved" | "rejected"
+  createdAt  DateTime @default(now())
+
+  @@index([feedId])
+  @@index([status])
+}
+
 model Favourite {
   id      String @id @default(uuid())
   userId  String

@@ -138,11 +138,56 @@ function isSupermarketFlyer(retailerName) {
   return isSupermarket && !isExcluded;
 }
 
+// Tiendeo e' passato al Next.js App Router: i dati non sono piu' in
+// __NEXT_DATA__ ma nei chunk `self.__next_f.push([1,"..."])` (RSC flight data).
+function decodeRscFlight(html) {
+  const re = /self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)/g;
+  let out = '', m;
+  while ((m = re.exec(html))) {
+    try { out += JSON.parse('"' + m[1] + '"'); } catch { /* chunk non testuale */ }
+  }
+  return out;
+}
+
+// Estrae l'array JSON che segue `"key":[` bilanciando le parentesi.
+function extractJsonArray(text, key) {
+  const i = text.indexOf(`"${key}":[`);
+  if (i < 0) return null;
+  const start = text.indexOf('[', i);
+  let depth = 0, inStr = false, esc = false;
+  for (let k = start; k < text.length; k++) {
+    const c = text[k];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '[') depth++;
+    else if (c === ']' && --depth === 0) return text.slice(start, k + 1);
+  }
+  return null;
+}
+
+let warnedUnknownFormat = false;
+
 async function getFlyers(city) {
   const { data: html } = await axios.get(`https://www.tiendeo.it/${city}`, { timeout: 25000, headers: { 'User-Agent': UA } });
+
+  // 1. Formato storico (pages router)
   const m = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
-  if (!m) return [];
-  return JSON.parse(m[1])?.props?.pageProps?.apiResources?.flyersByCategory?.flyers || [];
+  if (m) {
+    const legacy = JSON.parse(m[1])?.props?.pageProps?.apiResources?.flyersByCategory?.flyers;
+    if (Array.isArray(legacy)) return legacy;
+  }
+
+  // 2. Formato attuale (app router / RSC)
+  const raw = extractJsonArray(decodeRscFlight(html), 'flyers');
+  if (raw) return JSON.parse(raw);
+
+  // Senza questo avviso un cambio di formato azzera le offerte in silenzio
+  // (il chiamante ingoia gli errori): e' cosi' che l'app e' rimasta senza offerte.
+  if (!warnedUnknownFormat) {
+    warnedUnknownFormat = true;
+    console.warn(`[flyer] ATTENZIONE: nessun volantino estraibile da tiendeo.it/${city} — formato pagina cambiato?`);
+  }
+  return [];
 }
 
 async function ocrFlyer(imageUrl, retailer, endDate, coords) {

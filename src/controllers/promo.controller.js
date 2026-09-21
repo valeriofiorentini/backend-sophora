@@ -116,6 +116,16 @@ async function getPromos(req, res) {
     result.sort((a, b) => (a.distanceKm ?? 9999) - (b.distanceKm ?? 9999));
   }
 
+  // L'import salva lo stesso volantino su piu' zone vicine: chi sta a meta' strada
+  // le vedrebbe due volte. Si tiene una sola copia (la prima, cioe' la piu' vicina).
+  const seenOffers = new Set();
+  result = result.filter(p => {
+    const k = `${p.storeChain}|${p.productName}|${p.price}|${new Date(p.validUntil).getTime()}`;
+    if (seenOffers.has(k)) return false;
+    seenOffers.add(k);
+    return true;
+  });
+
   const total = result.length;
   const totalPages = Math.ceil(total / pageSize) || 1;
   const safePage = Math.min(pageNum, totalPages);

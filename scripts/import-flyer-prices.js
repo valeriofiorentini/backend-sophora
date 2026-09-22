@@ -26,6 +26,7 @@ const OpenAI = require('openai');
 const prisma = require('../src/config/database');
 const { getCityCoords, getAllCitySlugs } = require('../src/utils/comuniGeo');
 const { haversineKm } = require('../src/services/geo.service');
+const { canonicalizeChain } = require('../src/utils/storeChain');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
@@ -244,7 +245,10 @@ async function ocrFlyer(imageUrl, retailer, endDate, anchors) {
     parsed = null;
   }
   if (!parsed || typeof parsed !== 'object') return 0; // il modello non ha estratto dati utili dal volantino (es. "null", JSON troncato)
-  const storeChain = parsed.storeChain || retailer;
+  // Tiendeo/GPT restituiscono l'insegna del singolo volantino ("Conad City",
+  // "Spazio Conad", "Margherita Conad"...): senza normalizzare, ogni variante
+  // finisce come catena distinta nell'app invece che tutte sotto "Conad".
+  const storeChain = canonicalizeChain(parsed.storeChain || retailer);
   const items = Array.isArray(parsed.items) ? parsed.items.filter(i => i.name && i.price) : [];
   const validUntil = new Date(endDate);
   let saved = 0;

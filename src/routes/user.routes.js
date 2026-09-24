@@ -26,6 +26,7 @@ router.post('/signup',               signupLimit,         validate(signupSchema)
 router.post('/login',                loginLimit,          validate(loginSchema),  asyncHandler(c.login));
 router.post('/guest-login',          guestLoginLimit,     asyncHandler(c.guestLogin));
 router.post('/google-auth',          loginLimit,          asyncHandler(c.googleAuth));
+router.post('/apple-auth',           loginLimit,          asyncHandler(c.appleAuth));
 router.post('/verify-otp',           verifyOtpLimit,      asyncHandler(c.verifyOtpHandler));
 router.post('/resend-otp',           verifyOtpLimit,      asyncHandler(c.resendOtp));
 router.post('/forgot-password',      forgotPasswordLimit, asyncHandler(c.forgotPassword));

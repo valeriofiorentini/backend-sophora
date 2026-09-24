@@ -74,6 +74,7 @@ model User {
   longitude      Float?
   lastPromoNotifyAt DateTime? // ultima notifica offerte inviata (anti-spam)
   googleId       String?   @unique
+  appleId        String?   @unique // "sub" del token Accedi con Apple: ID stabile, non l'email
   b2bDataSharing Boolean   @default(true) // GDPR opt-out: se false non contribuisce a PriceHistory B2B
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

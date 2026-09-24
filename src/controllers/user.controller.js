@@ -23,6 +23,7 @@ const { generateAccessToken, generateRefreshToken, rotateRefreshToken, revokeAll
 const { createOtp, verifyOtp } = require('../utils/otp');
 const { sendOtpEmail, sendPasswordResetEmail } = require('../utils/email');
 const { uploadToS3 } = require('../config/s3');
+const { verifyAppleIdentityToken, isInvalidAppleTokenError } = require('../utils/appleIdentityToken');
 
 // ─── Validazione password ─────────────────────────────────────────────────────
 const PASSWORD_MIN_LEN = 8;
@@ -244,6 +245,102 @@ async function googleAuth(req, res) {
         data:  { isProfileCompleted: true },
       });
     }
+  }
+
+  const accessToken  = generateAccessToken(user.id);
+  const refreshToken = await generateRefreshToken(user.id);
+  return success(res, { accessToken, refreshToken, user: sanitizeUser(user) });
+}
+
+// ─── appleAuth ────────────────────────────────────────────────────────────────
+/**
+ * Login/signup con "Accedi con Apple" (richiesto da App Store guideline 4.8
+ * perche' l'app offre anche il login con Google). Stessa forma di risposta di
+ * googleAuth. Body: { identityToken, user?: { email, givenName, familyName } }.
+ *
+ * Sicurezza: l'identita' e l'email usate per collegare un account ESISTENTE
+ * arrivano solo dal token firmato da Apple. `user.email` del body non e'
+ * firmato (lo manda il client): serve solo per creare un account nuovo se il
+ * token non contiene l'email, mai per collegarsi a un account gia' presente,
+ * altrimenti basterebbe un proprio Apple ID valido + l'email della vittima.
+ * Se l'utente sceglie "Nascondi la mia email" l'email e' un relay
+ * @privaterelay.appleid.com e va trattata come una normale: non si prova a
+ * recuperare quella vera.
+ */
+async function appleAuth(req, res) {
+  const { identityToken, user: appleUser } = req.body;
+  if (!identityToken || typeof identityToken !== 'string') {
+    return error(res, 'identityToken obbligatorio');
+  }
+
+  let payload;
+  try {
+    payload = await verifyAppleIdentityToken(identityToken);
+  } catch (e) {
+    if (isInvalidAppleTokenError(e)) {
+      return error(res, 'Token Apple non valido o scaduto', 401);
+    }
+    console.error('[appleAuth] verifica token fallita:', e.message);
+    return error(res, 'Verifica Apple non disponibile, riprova', 503);
+  }
+
+  const appleId = payload.sub;
+  const tokenEmail =
+    typeof payload.email === 'string' && String(payload.email_verified) === 'true'
+      ? payload.email.trim().toLowerCase()
+      : null;
+  const bodyEmail = validateEmail(appleUser?.email) === null
+    ? appleUser.email.trim().toLowerCase()
+    : null;
+
+  let user = await prisma.user.findUnique({ where: { appleId } });
+
+  if (!user && tokenEmail) {
+    // Stessa email verificata da Apple di un account gia' registrato: collega
+    user = await prisma.user.findUnique({ where: { email: tokenEmail } });
+    if (user?.appleId && user.appleId !== appleId) {
+      return error(res, 'Account gia\' collegato a un altro Apple ID', 409);
+    }
+  }
+
+  if (!user) {
+    const email = tokenEmail ?? bodyEmail;
+    if (!email) {
+      return error(res, 'Email non disponibile da Apple: riprova o usa un altro metodo di accesso');
+    }
+    if (!tokenEmail && await prisma.user.findUnique({ where: { email } })) {
+      // Email non verificata da Apple e gia' in uso: non si collega
+      return error(res, 'Email gia\' registrata: accedi con il metodo che hai usato in origine', 409);
+    }
+
+    const baseUsername = email.split('@')[0].replace(/[^a-z0-9_]/gi, '').toLowerCase() || 'user';
+    let username = baseUsername;
+    let suffix = 1;
+    while (await prisma.user.findUnique({ where: { username } })) {
+      username = `${baseUsername}${suffix++}`;
+    }
+    const cleanName = v => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 100) : null);
+    user = await prisma.user.create({
+      data: {
+        email,
+        appleId,
+        name:               cleanName(appleUser?.givenName),
+        surname:            cleanName(appleUser?.familyName),
+        username,
+        isVerified:         true,
+        isProfileCompleted: true,
+      },
+    });
+  } else if (!user.appleId) {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data:  { appleId, isVerified: true, isProfileCompleted: true },
+    });
+  } else if (!user.isProfileCompleted) {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data:  { isProfileCompleted: true },
+    });
   }
 
   const accessToken  = generateAccessToken(user.id);
@@ -510,6 +607,7 @@ function sanitizeUser(user) {
     fcmToken,
     deviceToken,
     googleId,
+    appleId,
     ...rest
   } = user;
   return rest;
@@ -636,6 +734,7 @@ module.exports = {
   login,
   guestLogin,
   googleAuth,
+  appleAuth,
   verifyOtpHandler,
   resendOtp,
   forgotPassword,

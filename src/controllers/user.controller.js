@@ -328,7 +328,11 @@ async function appleAuth(req, res) {
         surname:            cleanName(appleUser?.familyName),
         username,
         isVerified:         true,
-        isProfileCompleted: true,
+        // false: Apple puo' non dare il nome ("Nascondi la mia email" / login
+        // senza scope) e il signup dell'app manda alla schermata "completa
+        // profilo" solo se questo flag e' false. Dal login successivo il ramo
+        // sotto lo porta a true, come per gli altri metodi.
+        isProfileCompleted: false,
       },
     });
   } else if (!user.appleId) {

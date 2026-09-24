@@ -91,7 +91,8 @@ test('primo login: crea utente con email del token, nome dal body, stessa forma 
   assert.strictEqual(u.email, 'x@privaterelay.appleid.com');
   assert.strictEqual(u.name, 'Mario');
   assert.strictEqual(u.surname, 'Rossi');
-  assert.strictEqual(u.isProfileCompleted, true);
+  // false: il signup dell'app usa questo flag per aprire "completa profilo"
+  assert.strictEqual(u.isProfileCompleted, false);
   for (const secret of ['appleId', 'googleId', 'password', 'fcmToken']) {
     assert.ok(!(secret in u), `${secret} non deve arrivare al client`);
   }
@@ -105,6 +106,8 @@ test('login successivo (Apple non rimanda user): ritrova l\'utente per sub, ness
   assert.strictEqual(r.code, 200);
   assert.strictEqual(users.length, 1);
   assert.strictEqual(r.body.data.user.name, 'Mario');
+  // dal secondo login il profilo risulta completo: la schermata compare una volta sola
+  assert.strictEqual(r.body.data.user.isProfileCompleted, true);
 });
 
 test('collega un account esistente solo tramite email verificata nel token', async () => {

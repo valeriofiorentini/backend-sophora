@@ -14,6 +14,7 @@ const prisma  = require('../config/database');
 const { success, error } = require('../utils/response');
 const { awardPoints }    = require('../services/gamification.service');
 const { checkReceiptLimit } = require('../utils/planLimits');
+const { getPlatform } = require('../utils/platform');
 const { runReceiptOcr }  = require('../services/receiptOcr.service');
 const { populatePantryFromReceipt, VALID_CATEGORIES } = require('../services/pantrySync.service');
 const {
@@ -86,7 +87,7 @@ async function scanReceipt(req, res) {
   if (files.length === 0) return error(res, 'Immagine scontrino obbligatoria');
 
   // Controllo limite piano gratuito (10 scontrini/mese)
-  const limitCheck = await checkReceiptLimit(req.userId);
+  const limitCheck = await checkReceiptLimit(req.userId, getPlatform(req));
   if (!limitCheck.allowed) {
     return error(res,
       `Hai raggiunto il limite di ${limitCheck.limit} scontrini al mese del piano gratuito. ` +
@@ -459,7 +460,7 @@ async function deleteReceipt(req, res) {
 // Genera il CSV e lo invia via email all'utente (non download diretto)
 async function exportReceiptsExcel(req, res) {
   const { isPremium: checkPremium } = require('../utils/planLimits');
-  if (!await checkPremium(req.userId)) {
+  if (!await checkPremium(req.userId, getPlatform(req))) {
     return error(res, 'L\'export Excel è una funzione Premium. Abbonati a Shopora Premium.', 403);
   }
 

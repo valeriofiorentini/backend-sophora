@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { checkChatLimit } = require('../utils/planLimits');
+const { getPlatform } = require('../utils/platform');
 const { langName } = require('../utils/lang');
 
 const openai = new OpenAI({
@@ -86,7 +87,7 @@ async function sendMessage(req, res) {
   }
 
   // Controllo limite piano gratuito (15 messaggi/giorno)
-  const chatLimit = await checkChatLimit(req.userId);
+  const chatLimit = await checkChatLimit(req.userId, getPlatform(req));
   if (!chatLimit.allowed) {
     return error(res,
       `Hai raggiunto il limite di ${chatLimit.limit} messaggi al giorno del piano gratuito. ` +

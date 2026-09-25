@@ -8,6 +8,7 @@ const { success, error } = require('../utils/response');
 const { optimizeRoute } = require('../services/ml.service');
 const prisma = require('../config/database');
 const { isPremium } = require('../utils/planLimits');
+const { getPlatform } = require('../utils/platform');
 const { haversineKm: haversine } = require('../services/geo.service');
 
 /**
@@ -25,7 +26,7 @@ const { haversineKm: haversine } = require('../services/geo.service');
 async function optimizeShoppingRoute(req, res) {
   const { userLat, userLon, storeIds, cartItems = [], returnHome = true } = req.body;
 
-  if (!await isPremium(req.userId)) {
+  if (!await isPremium(req.userId, getPlatform(req))) {
     return error(res, 'Il percorso ottimizzato è una funzione Premium. Abbonati a Shopora Premium.', 403);
   }
 

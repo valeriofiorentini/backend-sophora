@@ -16,6 +16,7 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const prisma  = require('../config/database');
 const { success, error } = require('../utils/response');
+const { isIosRequest } = require('../utils/platform');
 
 // URL del Payment Link (senza parametri) — da .env
 const PAYMENT_LINK_URL = process.env.STRIPE_PAYMENT_LINK_URL;
@@ -187,9 +188,11 @@ async function getSubscriptionStatus(req, res) {
     prisma.subscription.findUnique({ where: { userId: req.userId } }),
   ]);
 
+  // App Store 3.1.1: su iOS l'abbonamento Stripe non va mostrato come attivo
+  const ios = isIosRequest(req);
   return success(res, {
-    isSubscribed: user?.isSubscribed ?? false,
-    subscription: sub ? {
+    isSubscribed: ios ? false : (user?.isSubscribed ?? false),
+    subscription: sub && !ios ? {
       status:          sub.status,
       currentPeriodEnd: sub.currentPeriodEnd,
     } : null,

@@ -24,6 +24,7 @@ const { createOtp, verifyOtp } = require('../utils/otp');
 const { sendOtpEmail, sendPasswordResetEmail } = require('../utils/email');
 const { uploadToS3 } = require('../config/s3');
 const { verifyAppleIdentityToken, isInvalidAppleTokenError } = require('../utils/appleIdentityToken');
+const { isIosRequest } = require('../utils/platform');
 
 // ─── Validazione password ─────────────────────────────────────────────────────
 const PASSWORD_MIN_LEN = 8;
@@ -132,7 +133,7 @@ async function login(req, res) {
     });
   }
 
-  return success(res, { accessToken, refreshToken, user: sanitizeUser(user) });
+  return success(res, { accessToken, refreshToken, user: sanitizeUser(user, req) });
 }
 
 // ─── guestLogin ───────────────────────────────────────────────────────────────
@@ -153,7 +154,7 @@ async function guestLogin(req, res) {
 
   const accessToken  = generateAccessToken(user.id);
   const refreshToken = await generateRefreshToken(user.id);
-  return success(res, { accessToken, refreshToken, user: sanitizeUser(user) });
+  return success(res, { accessToken, refreshToken, user: sanitizeUser(user, req) });
 }
 
 // ─── googleAuth ───────────────────────────────────────────────────────────────
@@ -249,7 +250,7 @@ async function googleAuth(req, res) {
 
   const accessToken  = generateAccessToken(user.id);
   const refreshToken = await generateRefreshToken(user.id);
-  return success(res, { accessToken, refreshToken, user: sanitizeUser(user) });
+  return success(res, { accessToken, refreshToken, user: sanitizeUser(user, req) });
 }
 
 // ─── appleAuth ────────────────────────────────────────────────────────────────
@@ -349,7 +350,7 @@ async function appleAuth(req, res) {
 
   const accessToken  = generateAccessToken(user.id);
   const refreshToken = await generateRefreshToken(user.id);
-  return success(res, { accessToken, refreshToken, user: sanitizeUser(user) });
+  return success(res, { accessToken, refreshToken, user: sanitizeUser(user, req) });
 }
 
 // ─── verifyOtpHandler ─────────────────────────────────────────────────────────
@@ -376,7 +377,7 @@ async function verifyOtpHandler(req, res) {
 
   const accessToken  = generateAccessToken(user.id);
   const refreshToken = await generateRefreshToken(user.id);
-  return success(res, { accessToken, refreshToken, user: sanitizeUser(updatedUser) });
+  return success(res, { accessToken, refreshToken, user: sanitizeUser(updatedUser, req) });
 }
 
 // ─── resendOtp ────────────────────────────────────────────────────────────────
@@ -512,7 +513,7 @@ async function editProfile(req, res) {
   };
 
   const user = await prisma.user.update({ where: { id: req.userId }, data });
-  return success(res, { user: sanitizeUser(user) });
+  return success(res, { user: sanitizeUser(user, req) });
 }
 
 // ─── getProfile ───────────────────────────────────────────────────────────────
@@ -522,7 +523,7 @@ async function getProfile(req, res) {
     include: { nutritionProfile: true },
   });
   if (!user) return error(res, 'Utente non trovato', 404);
-  return success(res, { user: sanitizeUser(user) });
+  return success(res, { user: sanitizeUser(user, req) });
 }
 
 // ─── refreshToken ─────────────────────────────────────────────────────────────
@@ -605,7 +606,7 @@ async function getAllUsers(req, res) {
  * GDPR art. 5: minimizzazione dei dati — il client non ha bisogno di
  * fcmToken, deviceToken, googleId, password.
  */
-function sanitizeUser(user) {
+function sanitizeUser(user, req) {
   const {
     password,
     fcmToken,
@@ -614,6 +615,9 @@ function sanitizeUser(user) {
     appleId,
     ...rest
   } = user;
+  // App Store 3.1.1: su iOS l'app non deve mostrare/sbloccare un abbonamento
+  // comprato fuori dall'IAP. Il DB resta com'e'; cambia solo cio' che vede iOS.
+  if (isIosRequest(req)) rest.isSubscribed = false;
   return rest;
 }
 
@@ -641,7 +645,7 @@ async function getPlanUsage(req, res) {
     }),
   ]);
 
-  const isPremium = !!user?.isSubscribed;
+  const isPremium = !!user?.isSubscribed && !isIosRequest(req);
 
   return success(res, {
     plan:              isPremium ? 'Premium' : 'Free',

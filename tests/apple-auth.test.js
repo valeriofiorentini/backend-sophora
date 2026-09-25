@@ -53,10 +53,10 @@ stub('utils/appleIdentityToken', {
 
 const { appleAuth } = require('../src/controllers/user.controller');
 
-async function call(body) {
+async function call(body, headers = {}) {
   let out;
   const res = { status(c) { this.code = c; return this; }, json(b) { out = { code: this.code, body: b }; return this; } };
-  await appleAuth({ body }, res);
+  await appleAuth({ body, headers }, res);
   return out;
 }
 
@@ -118,6 +118,22 @@ test('collega un account esistente solo tramite email verificata nel token', asy
   assert.strictEqual(users.length, 1);
   assert.strictEqual(users[0].appleId, 'apple-sub-1');
   assert.strictEqual(r.body.data.accessToken, 'AT-u9');
+});
+
+test('3.1.1: un abbonato (Stripe) che entra da iOS riceve isSubscribed=false, ma il DB resta com\'e', async () => {
+  users.push({ id: 'u9', email: 'mario@gmail.com', appleId: null, isSubscribed: true, isProfileCompleted: true });
+  tokenResult = validToken({ email: 'mario@gmail.com' });
+  const r = await call({ identityToken: 'x' }, { 'x-platform': 'ios' });
+  assert.strictEqual(r.code, 200);
+  assert.strictEqual(r.body.data.user.isSubscribed, false);
+  assert.strictEqual(users[0].isSubscribed, true, 'il dato reale non va toccato');
+});
+
+test('3.1.1: lo stesso abbonato da Android continua a risultare abbonato', async () => {
+  users.push({ id: 'u9', email: 'mario@gmail.com', appleId: null, isSubscribed: true, isProfileCompleted: true });
+  tokenResult = validToken({ email: 'mario@gmail.com' });
+  const r = await call({ identityToken: 'x' }, { 'x-platform': 'android' });
+  assert.strictEqual(r.body.data.user.isSubscribed, true);
 });
 
 test('SICUREZZA: email del body (non firmata) NON collega un account esistente', async () => {

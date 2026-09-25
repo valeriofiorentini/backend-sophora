@@ -47,6 +47,9 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, '../public/privacy.html')));
 // Istruzioni eliminazione account (richiesto da Google Play "Sicurezza dei dati")
 app.get('/delete-account', (req, res) => res.sendFile(path.join(__dirname, '../public/delete-account.html')));
+// Termini di Servizio (stessa pagina di shopora.it/termini.html, su un dominio che controlliamo
+// con certezza: utile come URL stabile per le schede store e per Apple, che richiede un link ai termini)
+app.get(['/terms', '/termini'], (req, res) => res.sendFile(path.join(__dirname, '../public/terms.html')));
 
 // Express dietro un reverse proxy (Railway/Render/Nginx): necessario per ottenere
 // l'IP reale del client (rate limit) e per il corretto funzionamento di HTTPS.

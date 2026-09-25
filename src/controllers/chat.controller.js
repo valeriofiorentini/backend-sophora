@@ -3,6 +3,7 @@ const prisma = require('../config/database');
 const { success, error } = require('../utils/response');
 const { checkChatLimit } = require('../utils/planLimits');
 const { getPlatform } = require('../utils/platform');
+const { extractShoppingList } = require('../utils/shoppingList');
 const { langName } = require('../utils/lang');
 
 const openai = new OpenAI({
@@ -153,7 +154,7 @@ async function sendMessage(req, res) {
   try {
     const stream = await openai.chat.completions.create({
       model: CHAT_MODEL,
-      max_tokens: 1024,
+      max_tokens: 2048, // 1024 troncava le liste lunghe prima di chiudere <shopping_list>
       stream: true,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + contextAddendum },
@@ -170,15 +171,7 @@ async function sendMessage(req, res) {
     }
 
     // Extract shopping list JSON if present
-    let metadata = null;
-    const listMatch = fullResponse.match(/<shopping_list>([\s\S]*?)<\/shopping_list>/);
-    if (listMatch) {
-      try {
-        metadata = JSON.parse(listMatch[1]);
-      } catch {
-        // ignore parse errors
-      }
-    }
+    const metadata = extractShoppingList(fullResponse);
 
     // Salva il messaggio assistant e aggiorna il timestamp sessione in
     // un'unica transazione: due scritture correlate, o entrambe o nessuna
@@ -250,7 +243,7 @@ async function sendMessageSync(req, res) {
   try {
     const response = await openai.chat.completions.create({
       model: CHAT_MODEL,
-      max_tokens: 1024,
+      max_tokens: 2048, // 1024 troncava le liste lunghe prima di chiudere <shopping_list>
       stream: false,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + contextAddendum },
@@ -260,9 +253,7 @@ async function sendMessageSync(req, res) {
 
     const fullResponse = response.choices[0]?.message?.content || '';
 
-    let metadata = null;
-    const listMatch = fullResponse.match(/<shopping_list>([\s\S]*?)<\/shopping_list>/);
-    if (listMatch) { try { metadata = JSON.parse(listMatch[1]); } catch {} }
+    const metadata = extractShoppingList(fullResponse);
 
     const assistantMsg = await prisma.chatMessage.create({
       data: { sessionId: session.id, role: 'assistant', content: fullResponse, metadata },

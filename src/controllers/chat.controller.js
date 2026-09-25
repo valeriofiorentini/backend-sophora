@@ -17,7 +17,8 @@ const CHAT_MODEL = process.env.OPENROUTER_API_KEY
   : 'claude-haiku-4-5-20251001';
 
 const SYSTEM_PROMPT = `Sei Shopora AI, un assistente italiano per la spesa intelligente.
-Conosci i prezzi medi approssimativi dei supermercati italiani (Lidl, Esselunga, Conad, Carrefour, Eurospin, Penny, Coop, Aldi, MD, Iper).
+Non hai un listino prezzi dei supermercati: conosci solo le offerte reali che ti vengono fornite qui sotto (se presenti).
+NON dire mai che un supermercato è "da evitare" o "più caro" senza dati: se non hai dati, dillo e dai solo stime indicative chiaramente etichettate come tali. Mantieniti coerente con quanto detto nei messaggi precedenti della conversazione.
 Il tuo scopo è aiutare l'utente a spendere meno e mangiare meglio.
 
 Quando l'utente descrive un budget, esigenze di cucina o dieta, rispondi con:
@@ -29,7 +30,7 @@ Quando l'utente descrive un budget, esigenze di cucina o dieta, rispondi con:
 Se generi una lista spesa strutturata, incluila SEMPRE in questo formato tra tag speciali:
 <shopping_list>{"items":[{"name":"...","quantity":1,"estimatedPrice":0.00,"unit":"pz/kg/l","category":"..."}],"estimatedTotal":0.00,"recommendedStore":"...","savingsVsAvg":0.00}</shopping_list>
 
-Sii conciso e pratico. Non inventare prezzi precisi, usa stime ragionevoli.`;
+Sii conciso e pratico. Non inventare prezzi precisi: per i prodotti in offerta usa i prezzi reali forniti, per gli altri usa stime ragionevoli indicate come tali.`;
 
 // Lingua di risposta: segue User.language (impostata dall'app).
 // LANG_NAMES centralizzata in utils/lang (condivisa con pantry.controller).
@@ -38,6 +39,22 @@ function langInstruction(code) {
 }
 
 const SESSION_MAX = 50; // max sessioni per utente
+
+async function getOffersContext() {
+  try {
+    const promos = await prisma.promo.findMany({
+      where: { validUntil: { gte: new Date() }, price: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: 60,
+      select: { storeChain: true, storeName: true, productName: true, price: true, originalPrice: true, validUntil: true },
+    });
+    if (!promos.length) return '';
+    const lines = promos.map(p => `- ${p.storeChain || p.storeName}: ${p.productName} €${p.price}${p.originalPrice ? ` (era €${p.originalPrice})` : ''} fino al ${p.validUntil.toISOString().slice(0, 10)}`);
+    return `\nOfferte reali attualmente attive (usa SOLO questi prezzi come dati certi):\n${lines.join('\n')}`;
+  } catch (e) {
+    return '';
+  }
+}
 
 async function createSession(req, res) {
   // Previeni accumulo infinito di sessioni
@@ -130,7 +147,7 @@ async function sendMessage(req, res) {
     select: { name: true, monthlyBudget: true, nutritionProfile: true, language: true },
   });
 
-  let contextAddendum = langInstruction(userProfile?.language);
+  let contextAddendum = langInstruction(userProfile?.language) + await getOffersContext();
   if (userProfile?.monthlyBudget) {
     contextAddendum += `\nBudget mensile dell'utente: €${userProfile.monthlyBudget}.`;
   }
@@ -155,6 +172,7 @@ async function sendMessage(req, res) {
     const stream = await openai.chat.completions.create({
       model: CHAT_MODEL,
       max_tokens: 2048, // 1024 troncava le liste lunghe prima di chiudere <shopping_list>
+      temperature: 0.3,
       stream: true,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + contextAddendum },
@@ -230,7 +248,7 @@ async function sendMessageSync(req, res) {
     select: { name: true, monthlyBudget: true, nutritionProfile: true, language: true },
   });
 
-  let contextAddendum = langInstruction(userProfile?.language);
+  let contextAddendum = langInstruction(userProfile?.language) + await getOffersContext();
   if (userProfile?.monthlyBudget) contextAddendum += `\nBudget mensile: €${userProfile.monthlyBudget}.`;
   if (userProfile?.nutritionProfile?.dietType?.length > 0)
     contextAddendum += `\nDieta: ${userProfile.nutritionProfile.dietType.join(', ')}.`;
@@ -244,6 +262,7 @@ async function sendMessageSync(req, res) {
     const response = await openai.chat.completions.create({
       model: CHAT_MODEL,
       max_tokens: 2048, // 1024 troncava le liste lunghe prima di chiudere <shopping_list>
+      temperature: 0.3,
       stream: false,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + contextAddendum },

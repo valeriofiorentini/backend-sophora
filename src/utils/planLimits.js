@@ -12,11 +12,9 @@ const FREE_CHAT_MSGS_PER_DAY  = 15;
 
 /**
  * Ritorna true se l'utente è premium (isSubscribed === true nel DB).
- * `platform` e' l'header X-Platform della richiesta: su 'ios' nessuno e'
- * premium (guideline 3.1.1, vedi utils/platform.js) finche' non c'e' l'IAP.
+ * `platform` (X-Platform) non e' piu' usato: su iOS Premium si compra con IAP, quindi vale il DB.
  */
 async function isPremium(userId, platform) {
-  if (platform === 'ios') return false;
   const user = await prisma.user.findUnique({
     where:  { id: userId },
     select: { isSubscribed: true },

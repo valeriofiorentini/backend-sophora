@@ -24,7 +24,6 @@ const { createOtp, verifyOtp } = require('../utils/otp');
 const { sendOtpEmail, sendPasswordResetEmail } = require('../utils/email');
 const { uploadToS3 } = require('../config/s3');
 const { verifyAppleIdentityToken, isInvalidAppleTokenError } = require('../utils/appleIdentityToken');
-const { isIosRequest } = require('../utils/platform');
 
 // ─── Validazione password ─────────────────────────────────────────────────────
 const PASSWORD_MIN_LEN = 8;
@@ -615,9 +614,6 @@ function sanitizeUser(user, req) {
     appleId,
     ...rest
   } = user;
-  // App Store 3.1.1: su iOS l'app non deve mostrare/sbloccare un abbonamento
-  // comprato fuori dall'IAP. Il DB resta com'e'; cambia solo cio' che vede iOS.
-  if (isIosRequest(req)) rest.isSubscribed = false;
   return rest;
 }
 
@@ -645,7 +641,7 @@ async function getPlanUsage(req, res) {
     }),
   ]);
 
-  const isPremium = !!user?.isSubscribed && !isIosRequest(req);
+  const isPremium = !!user?.isSubscribed;
 
   return success(res, {
     plan:              isPremium ? 'Premium' : 'Free',

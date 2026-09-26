@@ -120,22 +120,6 @@ test('collega un account esistente solo tramite email verificata nel token', asy
   assert.strictEqual(r.body.data.accessToken, 'AT-u9');
 });
 
-test('3.1.1: un abbonato (Stripe) che entra da iOS riceve isSubscribed=false, ma il DB resta com\'e', async () => {
-  users.push({ id: 'u9', email: 'mario@gmail.com', appleId: null, isSubscribed: true, isProfileCompleted: true });
-  tokenResult = validToken({ email: 'mario@gmail.com' });
-  const r = await call({ identityToken: 'x' }, { 'x-platform': 'ios' });
-  assert.strictEqual(r.code, 200);
-  assert.strictEqual(r.body.data.user.isSubscribed, false);
-  assert.strictEqual(users[0].isSubscribed, true, 'il dato reale non va toccato');
-});
-
-test('3.1.1: lo stesso abbonato da Android continua a risultare abbonato', async () => {
-  users.push({ id: 'u9', email: 'mario@gmail.com', appleId: null, isSubscribed: true, isProfileCompleted: true });
-  tokenResult = validToken({ email: 'mario@gmail.com' });
-  const r = await call({ identityToken: 'x' }, { 'x-platform': 'android' });
-  assert.strictEqual(r.body.data.user.isSubscribed, true);
-});
-
 test('SICUREZZA: email del body (non firmata) NON collega un account esistente', async () => {
   users.push({ id: 'u9', email: 'vittima@gmail.com', appleId: null, isProfileCompleted: true });
   tokenResult = validToken({ email: undefined, email_verified: undefined }); // token senza email

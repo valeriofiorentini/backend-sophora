@@ -42,7 +42,7 @@ function langInstruction(code) {
 
 const SESSION_MAX = 50; // max sessioni per utente
 
-const OFFERS_RADIUS_KM = 50;
+const OFFERS_RADIUS_KM = 30;
 
 // Prima: prendeva le ultime offerte attive in tutta Italia senza guardare
 // dove si trova l'utente — l'AI consigliava negozi lontanissimi come se

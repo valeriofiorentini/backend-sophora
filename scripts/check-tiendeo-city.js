@@ -9,13 +9,18 @@
  *
  * Uso: node scripts/check-tiendeo-city.js
  */
+const axios = require('axios');
 const { getFlyers, isSupermarketFlyer } = require('./import-flyer-prices');
 
 const CITIES = ['roma', 'milano', 'napoli', 'torino', 'firenze', 'palermo', 'bari', 'bologna'];
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
 async function main() {
   for (const city of CITIES) {
     try {
+      const { data: html } = await axios.get(`https://www.tiendeo.it/${city}`, { timeout: 25000, headers: { 'User-Agent': UA } });
+      const hasLegacy = /<script id="__NEXT_DATA__"/.test(html);
+      console.log(`${city.padEnd(10)} html length: ${html.length}  __NEXT_DATA__ presente: ${hasLegacy}`);
       const flyers = await getFlyers(city);
       const supermarkets = flyers.filter(f => isSupermarketFlyer(f?.retailerName));
       console.log(`${city.padEnd(10)} volantini totali: ${String(flyers.length).padEnd(4)} supermercati: ${supermarkets.length}`);

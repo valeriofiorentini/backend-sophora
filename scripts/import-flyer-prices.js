@@ -318,7 +318,7 @@ async function importFlyerPrices() {
   return total;
 }
 
-module.exports = { importFlyerPrices, isSupermarketFlyer, pickAnchors, planTargets, doneKey };
+module.exports = { importFlyerPrices, isSupermarketFlyer, pickAnchors, planTargets, doneKey, getFlyers };
 
 // Esecuzione diretta da CLI
 if (require.main === module) {

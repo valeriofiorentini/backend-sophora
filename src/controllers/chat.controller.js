@@ -30,7 +30,9 @@ Quando l'utente descrive un budget, esigenze di cucina o dieta, rispondi con:
 Se generi una lista spesa strutturata, incluila SEMPRE in questo formato tra tag speciali:
 <shopping_list>{"items":[{"name":"...","quantity":1,"estimatedPrice":0.00,"unit":"pz/kg/l","category":"..."}],"estimatedTotal":0.00,"recommendedStore":"...","savingsVsAvg":0.00}</shopping_list>
 
-Sii conciso e pratico. Non inventare prezzi precisi: per i prodotti in offerta usa i prezzi reali forniti, per gli altri usa stime ragionevoli indicate come tali.`;
+Sii conciso e pratico. Non inventare prezzi precisi: per i prodotti in offerta usa i prezzi reali forniti, per gli altri usa stime ragionevoli indicate come tali.
+
+FORMATTAZIONE: l'app NON sa disegnare tabelle Markdown (i simboli | e --- restano visibili come testo grezzo, illeggibili). Non usare MAI tabelle. Per elenchi di prodotti usa solo titoli (##), grassetto (**) ed elenchi puntati (- voce).`;
 
 // Lingua di risposta: segue User.language (impostata dall'app).
 // LANG_NAMES centralizzata in utils/lang (condivisa con pantry.controller).

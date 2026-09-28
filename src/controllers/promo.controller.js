@@ -66,14 +66,14 @@ async function enrichWithNearestStore(promos, lat, lon) {
 }
 
 async function getPromos(req, res) {
-  const { latitude, longitude, chain, radius = 50, page = 1, limit = 10 } = req.query;
+  const { latitude, longitude, chain, radius = 30, page = 1, limit = 10 } = req.query;
   const now = new Date();
   const pageNum  = Math.max(1, parseInt(page));
   const pageSize = Math.min(50, Math.max(1, parseInt(limit)));
 
   const lat = parseFloat(latitude);
   const lon = parseFloat(longitude);
-  const r   = Math.min(parseFloat(radius) || 50, 500);
+  const r   = Math.min(parseFloat(radius) || 30, 500);
   const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
 
   // Cache per zona: coordinate arrotondate a ~1km (2 decimali) così utenti

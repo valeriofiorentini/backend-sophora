@@ -106,8 +106,10 @@ test('login successivo (Apple non rimanda user): ritrova l\'utente per sub, ness
   assert.strictEqual(r.code, 200);
   assert.strictEqual(users.length, 1);
   assert.strictEqual(r.body.data.user.name, 'Mario');
-  // dal secondo login il profilo risulta completo: la schermata compare una volta sola
-  assert.strictEqual(r.body.data.user.isProfileCompleted, true);
+  // Se non ha ancora completato il profilo (dieta/allergie), resta false
+  // anche al secondo login: prima veniva forzato a true e la schermata
+  // "completa profilo" non si vedeva mai più dopo il primo tentativo saltato.
+  assert.strictEqual(r.body.data.user.isProfileCompleted, false);
 });
 
 test('collega un account esistente solo tramite email verificata nel token', async () => {

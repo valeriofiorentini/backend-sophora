@@ -223,29 +223,28 @@ async function googleAuth(req, res) {
         username,
         avatar:             payload.picture ?? null,
         isVerified:         true,
-        isProfileCompleted: true,
+        // false come per Apple: il primo accesso porta alla schermata
+        // "completa profilo" (dieta/allergie, facoltative). Prima era
+        // sempre true, quindi Google saltava quello step a prescindere.
+        isProfileCompleted: false,
       },
     });
   } else if (!user.googleId) {
-    // Account esistente con stessa email: collega Google
+    // Account esistente con stessa email: collega Google. isProfileCompleted
+    // non si tocca (chi arrivava da email/OTP l'ha già true).
     user = await prisma.user.update({
       where: { id: user.id },
       data:  {
         googleId,
-        isVerified:         true,
-        isProfileCompleted: true,
+        isVerified: true,
         avatar: user.avatar ?? payload.picture ?? null,
       },
     });
-  } else {
-    // Utente già collegato: assicura isProfileCompleted
-    if (!user.isProfileCompleted) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data:  { isProfileCompleted: true },
-      });
-    }
   }
+  // Utente già collegato: isProfileCompleted resta quello che è — non lo
+  // forziamo più a true qui, altrimenti un utente che non aveva ancora
+  // passato lo step "completa profilo" lo saltava per sempre dal secondo
+  // login in poi.
 
   const accessToken  = generateAccessToken(user.id);
   const refreshToken = await generateRefreshToken(user.id);
@@ -336,16 +335,15 @@ async function appleAuth(req, res) {
       },
     });
   } else if (!user.appleId) {
+    // Collega Apple a un account esistente: isProfileCompleted non si tocca.
     user = await prisma.user.update({
       where: { id: user.id },
-      data:  { appleId, isVerified: true, isProfileCompleted: true },
-    });
-  } else if (!user.isProfileCompleted) {
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data:  { isProfileCompleted: true },
+      data:  { appleId, isVerified: true },
     });
   }
+  // Non forziamo più isProfileCompleted:true qui al login successivo — vedi
+  // stesso commento in googleAuth. Resta false finché l'utente non passa
+  // davvero dalla schermata "completa profilo".
 
   const accessToken  = generateAccessToken(user.id);
   const refreshToken = await generateRefreshToken(user.id);
@@ -474,7 +472,10 @@ async function changePasswordByOldPassword(req, res) {
 
 // ─── editProfile ──────────────────────────────────────────────────────────────
 async function editProfile(req, res) {
-  const { name, phone, country, language, monthlyBudget, yearlyBudget, deviceToken, b2bDataSharing } = req.body;
+  const {
+    name, surname, username, phone, country, language, monthlyBudget,
+    yearlyBudget, deviceToken, b2bDataSharing, isProfileCompleted,
+  } = req.body;
 
   // Valida e sanitizza i campi numerici
   const budget = {
@@ -499,6 +500,8 @@ async function editProfile(req, res) {
 
   const data = {
     ...(name         !== undefined && { name:         String(name).slice(0, 100) }),
+    ...(surname      !== undefined && { surname:      String(surname).slice(0, 100) }),
+    ...(username     !== undefined && { username:     String(username).trim().slice(0, 50) || undefined }),
     ...(phone        !== undefined && { phone:        String(phone).slice(0, 20) }),
     ...(country      !== undefined && { country:      String(country).slice(0, 50) }),
     ...(language     !== undefined && { language:     String(language).slice(0, 10) }),
@@ -509,9 +512,23 @@ async function editProfile(req, res) {
     // GDPR opt-out: accetta solo booleano esplicito (ignora stringhe/null ambigui)
     ...(b2bDataSharing === true  && { b2bDataSharing: true }),
     ...(b2bDataSharing === false && { b2bDataSharing: false }),
+    // Si può solo COMPLETARE il profilo da qui, mai "ri-scompletarlo": un
+    // client che manda isProfileCompleted:false non deve poter bloccare di
+    // nuovo un account già attivo.
+    ...(isProfileCompleted === true && { isProfileCompleted: true }),
   };
 
-  const user = await prisma.user.update({ where: { id: req.userId }, data });
+  // username è @unique: prima un nome già preso faceva rispondere 500
+  // (errore Prisma grezzo) invece di un messaggio comprensibile.
+  let user;
+  try {
+    user = await prisma.user.update({ where: { id: req.userId }, data });
+  } catch (e) {
+    if (e.code === 'P2002' && e.meta?.target?.includes('username')) {
+      return error(res, 'Username già in uso, scegline un altro', 409);
+    }
+    throw e;
+  }
   return success(res, { user: sanitizeUser(user, req) });
 }
 

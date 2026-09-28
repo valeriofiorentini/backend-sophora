@@ -66,6 +66,7 @@ const editProfileSchema = z.object({
   yearlyBudget:   optNum(0, 12_000_000),
   deviceToken:    optStr(500),
   b2bDataSharing: optBool(),
+  isProfileCompleted: optBool(),
 }).passthrough();
 
 const fcmTokenSchema = z.object({

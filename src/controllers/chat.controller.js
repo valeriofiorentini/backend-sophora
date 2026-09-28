@@ -40,17 +40,29 @@ function langInstruction(code) {
 
 const SESSION_MAX = 50; // max sessioni per utente
 
-async function getOffersContext() {
+const OFFERS_RADIUS_KM = 50;
+
+// Prima: prendeva le ultime offerte attive in tutta Italia senza guardare
+// dove si trova l'utente — l'AI consigliava negozi lontanissimi come se
+// fossero sotto casa. Ora filtra entro OFFERS_RADIUS_KM dall'ultima
+// posizione nota dell'utente (salvata da fcm-token/dashboard). Le offerte
+// "nazionali" (senza coordinate, valide ovunque) restano sempre incluse.
+async function getOffersContext(userLat, userLon) {
   try {
+    const { haversineKm } = require('../services/geo.service');
     const promos = await prisma.promo.findMany({
       where: { validUntil: { gte: new Date() }, price: { not: null } },
       orderBy: { createdAt: 'desc' },
-      take: 60,
-      select: { storeChain: true, storeName: true, productName: true, price: true, originalPrice: true, validUntil: true },
+      take: 300,
+      select: { storeChain: true, storeName: true, productName: true, price: true, originalPrice: true, validUntil: true, latitude: true, longitude: true },
     });
-    if (!promos.length) return '';
-    const lines = promos.map(p => `- ${p.storeChain || p.storeName}: ${p.productName} €${p.price}${p.originalPrice ? ` (era €${p.originalPrice})` : ''} fino al ${p.validUntil.toISOString().slice(0, 10)}`);
-    return `\nOfferte reali attualmente attive (usa SOLO questi prezzi come dati certi):\n${lines.join('\n')}`;
+    const nearby = (userLat != null && userLon != null)
+      ? promos.filter(p => p.latitude == null || p.longitude == null || haversineKm(userLat, userLon, p.latitude, p.longitude) <= OFFERS_RADIUS_KM)
+      : promos.filter(p => p.latitude == null || p.longitude == null); // niente posizione nota: solo le offerte valide ovunque
+    const selected = nearby.slice(0, 60);
+    if (!selected.length) return '';
+    const lines = selected.map(p => `- ${p.storeChain || p.storeName}: ${p.productName} €${p.price}${p.originalPrice ? ` (era €${p.originalPrice})` : ''} fino al ${p.validUntil.toISOString().slice(0, 10)}`);
+    return `\nOfferte reali attualmente attive VICINO ALL'UTENTE (usa SOLO questi prezzi come dati certi, e SOLO se il negozio è realmente vicino a lui — non citare mai negozi di altre zone d'Italia):\n${lines.join('\n')}`;
   } catch (e) {
     return '';
   }
@@ -141,13 +153,13 @@ async function sendMessage(req, res) {
     take: 20,
   })).reverse();
 
-  // Load user context (budget, diet profile, lingua)
+  // Load user context (budget, diet profile, lingua, posizione)
   const userProfile = await prisma.user.findUnique({
     where: { id: req.userId },
-    select: { name: true, monthlyBudget: true, nutritionProfile: true, language: true },
+    select: { name: true, monthlyBudget: true, nutritionProfile: true, language: true, latitude: true, longitude: true },
   });
 
-  let contextAddendum = langInstruction(userProfile?.language) + await getOffersContext();
+  let contextAddendum = langInstruction(userProfile?.language) + await getOffersContext(userProfile?.latitude, userProfile?.longitude);
   if (userProfile?.monthlyBudget) {
     contextAddendum += `\nBudget mensile dell'utente: €${userProfile.monthlyBudget}.`;
   }
@@ -245,10 +257,10 @@ async function sendMessageSync(req, res) {
 
   const userProfile = await prisma.user.findUnique({
     where: { id: req.userId },
-    select: { name: true, monthlyBudget: true, nutritionProfile: true, language: true },
+    select: { name: true, monthlyBudget: true, nutritionProfile: true, language: true, latitude: true, longitude: true },
   });
 
-  let contextAddendum = langInstruction(userProfile?.language) + await getOffersContext();
+  let contextAddendum = langInstruction(userProfile?.language) + await getOffersContext(userProfile?.latitude, userProfile?.longitude);
   if (userProfile?.monthlyBudget) contextAddendum += `\nBudget mensile: €${userProfile.monthlyBudget}.`;
   if (userProfile?.nutritionProfile?.dietType?.length > 0)
     contextAddendum += `\nDieta: ${userProfile.nutritionProfile.dietType.join(', ')}.`;

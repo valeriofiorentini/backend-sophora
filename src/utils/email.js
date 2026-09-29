@@ -21,7 +21,10 @@ function client() {
 }
 
 const FROM = () => process.env.EMAIL_FROM || 'Shopora <onboarding@resend.dev>';
-const LOGO_URL = 'https://www.shopora.it/assets/logo.png';
+// ?v=2: Gmail e altri client mettono in cache le immagini per indirizzo — la
+// prima versione (non quadrata, stiracchiata) restava in cache anche dopo
+// aver corretto il file sul sito. Cambiare l'indirizzo forza a riscaricarla.
+const LOGO_URL = 'https://www.shopora.it/assets/logo.png?v=2';
 const LOGO_HTML = `<img src="${LOGO_URL}" alt="Shopora" width="120" height="120" style="display:block;margin:0 auto 20px;border-radius:24px">`;
 
 // Il SDK Resend NON lancia un'eccezione se l'invio viene rifiutato: risponde

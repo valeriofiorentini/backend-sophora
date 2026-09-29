@@ -22,7 +22,7 @@ function client() {
 
 const FROM = () => process.env.EMAIL_FROM || 'Shopora <onboarding@resend.dev>';
 const LOGO_URL = 'https://www.shopora.it/assets/logo.png';
-const LOGO_HTML = `<img src="${LOGO_URL}" alt="Shopora" width="56" height="56" style="display:block;margin:0 auto 16px;border-radius:12px">`;
+const LOGO_HTML = `<img src="${LOGO_URL}" alt="Shopora" width="120" height="120" style="display:block;margin:0 auto 20px;border-radius:24px">`;
 
 // Il SDK Resend NON lancia un'eccezione se l'invio viene rifiutato: risponde
 // con { data, error } anche in caso di errore. Senza questo controllo il

@@ -1,55 +1,45 @@
 /**
- * mailer.js — Email transazionale via Nodemailer + Gmail
+ * mailer.js — Email transazionali con allegato, via Resend.
  *
- * Setup:
- *  1. Abilita 2FA su Gmail
- *  2. Crea App Password: https://myaccount.google.com/apppasswords
- *  3. Aggiungi al .env: SMTP_USER, SMTP_PASS, SMTP_FROM
+ * Prima: Gmail via SMTP (vedi utils/email.js per il motivo del cambio).
+ * .env: RESEND_API_KEY, EMAIL_FROM (es. "Shopora <noreply@shopora.it>")
  */
 
-const nodemailer = require('nodemailer');
+const {Resend} = require('resend');
 
-let _transporter = null;
-
-// Supporta sia SMTP_USER/SMTP_PASS (naming vecchio) che EMAIL_USER/EMAIL_PASS
-const smtpUser = () => process.env.SMTP_USER || process.env.EMAIL_USER;
-const smtpPass = () => process.env.SMTP_PASS || process.env.EMAIL_PASS;
-
-function getTransporter() {
-  if (_transporter) return _transporter;
-
-  if (!smtpUser() || !smtpPass()) {
-    throw new Error('Variabili email non configurate nel .env (EMAIL_USER/EMAIL_PASS)');
+let _resend = null;
+function client() {
+  if (_resend) return _resend;
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY non configurata nel .env');
   }
-
-  _transporter = nodemailer.createTransport({
-    host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port:   parseInt(process.env.EMAIL_PORT || '587'),
-    secure: false,
-    auth: {
-      user: smtpUser(),
-      pass: smtpPass(),
-    },
-  });
-
-  return _transporter;
+  _resend = new Resend(process.env.RESEND_API_KEY);
+  return _resend;
 }
 
 /**
- * Invia un'email con allegato CSV.
+ * Invia un'email con allegato (es. CSV).
  * @param {string} to  - indirizzo destinatario
  * @param {string} subject
  * @param {string} html - corpo HTML
- * @param {{ filename: string, content: string }} attachment - allegato CSV
+ * @param {{ filename: string, content: string, encoding?: string }} attachment
  */
 async function sendMailWithAttachment(to, subject, html, attachment) {
-  const transporter = getTransporter();
-  await transporter.sendMail({
-    from:    process.env.EMAIL_FROM || process.env.SMTP_FROM || smtpUser(),
+  const attachments = attachment
+    ? [{
+        filename: attachment.filename,
+        // Resend vuole il contenuto in base64; l'allegato arriva qui come
+        // stringa utf8 (es. il CSV già pronto), va prima convertito.
+        content: Buffer.from(attachment.content, attachment.encoding || 'utf8').toString('base64'),
+      }]
+    : undefined;
+
+  await client().emails.send({
+    from: process.env.EMAIL_FROM || 'Shopora <onboarding@resend.dev>',
     to,
     subject,
     html,
-    attachments: attachment ? [attachment] : [],
+    attachments,
   });
 }
 

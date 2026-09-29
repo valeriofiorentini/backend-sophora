@@ -34,6 +34,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.14",
     "openai": "^4.104.0",
+    "resend": "^6.30.0",
     "stripe": "^16.2.0",
     "tesseract.js": "^5.1.0",
     "uuid": "^10.0.0",

@@ -1,15 +1,30 @@
-const nodemailer = require('nodemailer');
+/**
+ * email.js — Email transazionali via Resend.
+ *
+ * Prima: Gmail via SMTP. Un account Gmail normale non ha nessuna
+ * autenticazione di dominio (SPF/DKIM/DMARC) dietro — le email finivano
+ * spesso nello spam. Ora si manda dal dominio vero (shopora.it), verificato
+ * su Resend con i record DNS giusti.
+ *
+ * .env: RESEND_API_KEY, EMAIL_FROM (es. "Shopora <noreply@shopora.it>")
+ */
+const {Resend} = require('resend');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: parseInt(process.env.EMAIL_PORT || '587'),
-  secure: false,
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-});
+let _resend = null;
+function client() {
+  if (_resend) return _resend;
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY non configurata nel .env');
+  }
+  _resend = new Resend(process.env.RESEND_API_KEY);
+  return _resend;
+}
+
+const FROM = () => process.env.EMAIL_FROM || 'Shopora <onboarding@resend.dev>';
 
 async function sendOtpEmail(to, otp) {
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+  await client().emails.send({
+    from: FROM(),
     to,
     subject: 'Shopora — Codice di verifica',
     html: `
@@ -24,8 +39,8 @@ async function sendOtpEmail(to, otp) {
 }
 
 async function sendPasswordResetEmail(to, otp) {
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+  await client().emails.send({
+    from: FROM(),
     to,
     subject: 'Shopora — Reset password',
     html: `
@@ -67,8 +82,8 @@ async function sendMonthlyReportEmail(to, report, user) {
     `;
   }
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+  await client().emails.send({
+    from: FROM(),
     to,
     subject: `Shopora — Report Spesa di ${monthName} ${report.year}`,
     html: `
@@ -76,7 +91,7 @@ async function sendMonthlyReportEmail(to, report, user) {
         <h2 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px;">Shopora — Report Spesa</h2>
         <p>Ciao ${user.name || 'utente'},</p>
         <p>Ecco il riepilogo delle tue spese per il mese di <strong>${monthName} ${report.year}</strong>.</p>
-        
+
         <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
           <h3 style="margin-top: 0; color: #1f2937;">Sintesi</h3>
           <p style="font-size: 18px; margin-bottom: 5px;">Spesa Totale: <strong style="color: #ef4444;">€ ${report.total.toFixed(2)}</strong></p>
@@ -103,7 +118,7 @@ async function sendMonthlyReportEmail(to, report, user) {
             ${itemsHtml}
           </tbody>
         </table>
-        
+
         <p style="margin-top: 30px; font-size: 12px; color: #6b7280; text-align: center;">
           Generato automaticamente da Shopora AI.
         </p>

@@ -21,6 +21,8 @@ function client() {
 }
 
 const FROM = () => process.env.EMAIL_FROM || 'Shopora <onboarding@resend.dev>';
+const LOGO_URL = 'https://www.shopora.it/assets/logo.png';
+const LOGO_HTML = `<img src="${LOGO_URL}" alt="Shopora" width="56" height="56" style="display:block;margin:0 auto 16px;border-radius:12px">`;
 
 // Il SDK Resend NON lancia un'eccezione se l'invio viene rifiutato: risponde
 // con { data, error } anche in caso di errore. Senza questo controllo il
@@ -40,7 +42,8 @@ async function sendOtpEmail(to, otp) {
     to,
     subject: 'Shopora — Codice di verifica',
     html: `
-      <div style="font-family:sans-serif;max-width:400px;margin:auto">
+      <div style="font-family:sans-serif;max-width:400px;margin:auto;text-align:center">
+        ${LOGO_HTML}
         <h2>Shopora</h2>
         <p>Il tuo codice di verifica è:</p>
         <h1 style="letter-spacing:8px;color:#2563eb">${otp}</h1>
@@ -56,7 +59,8 @@ async function sendPasswordResetEmail(to, otp) {
     to,
     subject: 'Shopora — Reset password',
     html: `
-      <div style="font-family:sans-serif;max-width:400px;margin:auto">
+      <div style="font-family:sans-serif;max-width:400px;margin:auto;text-align:center">
+        ${LOGO_HTML}
         <h2>Shopora</h2>
         <p>Usa questo codice per reimpostare la password:</p>
         <h1 style="letter-spacing:8px;color:#2563eb">${otp}</h1>
@@ -100,6 +104,7 @@ async function sendMonthlyReportEmail(to, report, user) {
     subject: `Shopora — Report Spesa di ${monthName} ${report.year}`,
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: auto; color: #333;">
+        ${LOGO_HTML}
         <h2 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px;">Shopora — Report Spesa</h2>
         <p>Ciao ${user.name || 'utente'},</p>
         <p>Ecco il riepilogo delle tue spese per il mese di <strong>${monthName} ${report.year}</strong>.</p>

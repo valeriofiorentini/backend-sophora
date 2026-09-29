@@ -22,8 +22,20 @@ function client() {
 
 const FROM = () => process.env.EMAIL_FROM || 'Shopora <onboarding@resend.dev>';
 
+// Il SDK Resend NON lancia un'eccezione se l'invio viene rifiutato: risponde
+// con { data, error } anche in caso di errore. Senza questo controllo il
+// codice sopra pensava che l'email fosse partita anche quando Resend la
+// scartava in silenzio (es. dominio non ancora verificato, chiave sbagliata).
+async function send(payload) {
+  const {data, error} = await client().emails.send(payload);
+  if (error) {
+    throw new Error(`Resend ha rifiutato l'invio: ${error.message || JSON.stringify(error)}`);
+  }
+  return data;
+}
+
 async function sendOtpEmail(to, otp) {
-  await client().emails.send({
+  await send({
     from: FROM(),
     to,
     subject: 'Shopora — Codice di verifica',
@@ -39,7 +51,7 @@ async function sendOtpEmail(to, otp) {
 }
 
 async function sendPasswordResetEmail(to, otp) {
-  await client().emails.send({
+  await send({
     from: FROM(),
     to,
     subject: 'Shopora — Reset password',
@@ -82,7 +94,7 @@ async function sendMonthlyReportEmail(to, report, user) {
     `;
   }
 
-  await client().emails.send({
+  await send({
     from: FROM(),
     to,
     subject: `Shopora — Report Spesa di ${monthName} ${report.year}`,

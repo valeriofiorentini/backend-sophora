@@ -34,13 +34,18 @@ async function sendMailWithAttachment(to, subject, html, attachment) {
       }]
     : undefined;
 
-  await client().emails.send({
+  // Il SDK Resend NON lancia un'eccezione se l'invio viene rifiutato:
+  // risponde con { data, error } anche in caso di errore.
+  const {error} = await client().emails.send({
     from: process.env.EMAIL_FROM || 'Shopora <onboarding@resend.dev>',
     to,
     subject,
     html,
     attachments,
   });
+  if (error) {
+    throw new Error(`Resend ha rifiutato l'invio: ${error.message || JSON.stringify(error)}`);
+  }
 }
 
 module.exports = { sendMailWithAttachment };

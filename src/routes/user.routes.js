@@ -36,6 +36,16 @@ router.post('/change-password-otp',  changePasswordLimit, asyncHandler(c.changeP
 // FIX: refresh token via POST body (non GET URL — evita log exposure)
 router.post('/refresh', asyncHandler(c.refreshTokenHandler));
 
+// ─── Solo Admin (via X-Admin-Key, SENZA login utente) ─────────────────────────
+// Prima stavano dopo router.use(auth) qui sotto: quel middleware richiede
+// SEMPRE un Bearer token valido e rifiuta con 401 "Token mancante" prima
+// ancora di arrivare al controllo della chiave admin — la modalità
+// "X-Admin-Key senza login" descritta nei commenti di adminOnly.js non
+// poteva quindi mai funzionare per queste due rotte. adminOnly() le
+// protegge comunque (richiede la chiave o un utente isAdmin=true).
+router.get('/getAllUsers', adminOnly, asyncHandler(c.getAllUsers));
+router.post('/admin/seed-demo-account', adminOnly, asyncHandler(c.seedDemoAccount));
+
 // ─── Protette (JWT richiesto) ─────────────────────────────────────────────────
 router.use(auth);
 
@@ -82,10 +92,5 @@ router.post('/notify-promos', adminOnly, asyncHandler(async (req, res) => {
   const result = await notifyNearbyPromos();
   return res.json({ success: true, data: result });
 }));
-
-// ─── Solo Admin ───────────────────────────────────────────────────────────────
-// Richiede header X-Admin-Key o flag isAdmin nel JWT
-router.get('/getAllUsers', adminOnly, asyncHandler(c.getAllUsers));
-router.post('/admin/seed-demo-account', adminOnly, asyncHandler(c.seedDemoAccount));
 
 module.exports = router;

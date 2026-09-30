@@ -86,5 +86,6 @@ router.post('/notify-promos', adminOnly, asyncHandler(async (req, res) => {
 // ─── Solo Admin ───────────────────────────────────────────────────────────────
 // Richiede header X-Admin-Key o flag isAdmin nel JWT
 router.get('/getAllUsers', adminOnly, asyncHandler(c.getAllUsers));
+router.post('/admin/seed-demo-account', adminOnly, asyncHandler(c.seedDemoAccount));
 
 module.exports = router;

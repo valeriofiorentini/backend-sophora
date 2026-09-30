@@ -616,6 +616,51 @@ async function getAllUsers(req, res) {
   return success(res, { users, total });
 }
 
+// ─── seedDemoAccount — SOLO ADMIN ──────────────────────────────────────────────
+// Crea (o aggiorna) un account con email/password fissate e un abbonamento con
+// uno stato specifico, senza passare dal flusso di signup normale (verifica
+// OTP inclusa). Serve per preparare account demo da dare al team di verifica
+// delle app di Apple — es. un account con abbonamento SCADUTO, richiesto per
+// testare il flusso di rinnovo (Linea guida 2.1), oltre a quello con
+// abbonamento attivo già fornito.
+async function seedDemoAccount(req, res) {
+  const {email, password, status = 'expired', daysAgo = 30} = req.body || {};
+  if (!email || !password) {
+    return error(res, 'email e password sono obbligatorie', 400);
+  }
+
+  const hashed = await bcrypt.hash(password, 12);
+  const user = await prisma.user.upsert({
+    where: {email},
+    update: {
+      password: hashed,
+      isVerified: true,
+      isProfileCompleted: true,
+      isSubscribed: status === 'active',
+    },
+    create: {
+      email,
+      password: hashed,
+      name: 'Demo',
+      surname: 'Apple Review',
+      isVerified: true,
+      isProfileCompleted: true,
+      isSubscribed: status === 'active',
+    },
+  });
+
+  const currentPeriodEnd = new Date(
+    Date.now() + (status === 'expired' ? -1 : 1) * daysAgo * 24 * 60 * 60 * 1000,
+  );
+  await prisma.subscription.upsert({
+    where: {userId: user.id},
+    update: {provider: 'apple', status, currentPeriodEnd},
+    create: {userId: user.id, provider: 'apple', status, currentPeriodEnd},
+  });
+
+  return success(res, {email: user.email, status, currentPeriodEnd});
+}
+
 // ─── sanitizeUser ─────────────────────────────────────────────────────────────
 /**
  * Rimuove i campi sensibili prima di inviare l'utente al client.
@@ -768,6 +813,7 @@ module.exports = {
   logout,
   deleteAccount,
   getAllUsers,
+  seedDemoAccount,
   searchUsers,
   blockUser,
   unblockUser,

@@ -41,7 +41,7 @@ router.post('/refresh', asyncHandler(c.refreshTokenHandler));
 // SEMPRE un Bearer token valido e rifiuta con 401 "Token mancante" prima
 // ancora di arrivare al controllo della chiave admin — la modalità
 // "X-Admin-Key senza login" descritta nei commenti di adminOnly.js non
-// poteva quindi mai funzionare per queste due rotte. adminOnly() le
+// poteva quindi mai funzionare per queste rotte. adminOnly() le
 // protegge comunque (richiede la chiave o un utente isAdmin=true).
 router.get('/getAllUsers', adminOnly, asyncHandler(c.getAllUsers));
 router.post('/admin/seed-demo-account', adminOnly, asyncHandler(c.seedDemoAccount));

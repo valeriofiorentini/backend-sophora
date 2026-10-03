@@ -124,7 +124,14 @@ async function callOcrApi(model, messages, attempt = 0, budget = null) {
       temperature: 0,
       store: false,   // GDPR: Zero Data Retention
       user: 'shopora-receipt-ocr',
+    }, {
+      // Opzioni della LIBRERIA (secondo argomento), non del corpo richiesta:
+      // prima `timeout` stava nel corpo, quindi veniva ignorato e valeva il
+      // default dell'SDK (10 minuti); e l'SDK rifaceva da solo fino a 2 volte
+      // ogni richiesta fallita. Una lettura lenta poteva durare molti minuti
+      // → timeout nell'app anche in background. I ritentativi li gestiamo qui.
       timeout: callTimeout(budget),
+      maxRetries: 0,
     });
   } catch (e) {
     if (attempt < 2 && isTransientOcrError(e) && canStartCall(budget)) {
@@ -144,9 +151,11 @@ async function callOcrApi(model, messages, attempt = 0, budget = null) {
 // la lettura migliore ottenuta finora (l'avviso "la somma non torna" la segnala).
 const MIN_CALL_MS = 20000;
 const canStartCall = budget => !budget || budget.deadline - Date.now() >= MIN_CALL_MS;
+// 60s per lettura: la risposta compatta di uno scontrino da ~100 righe può
+// richiedere 40-50s per essere generata.
 const callTimeout = budget => (budget
-  ? Math.max(15000, Math.min(45000, budget.deadline - Date.now()))
-  : 45000);
+  ? Math.max(15000, Math.min(60000, budget.deadline - Date.now()))
+  : 60000);
 
 // ─── OCR dedicato (OCR.space) → testo esatto ──────────────────────────────────
 async function ocrSpaceText(imageBase64) {

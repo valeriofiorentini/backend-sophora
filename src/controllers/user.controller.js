@@ -367,9 +367,11 @@ async function verifyOtpHandler(req, res) {
 
   // Usa l'oggetto restituito dall'update: contiene isVerified=true
   // (l'oggetto `user` letto prima avrebbe ancora isVerified=false)
+  // isProfileCompleted NON si forza a true: come per Google/Apple, chi si
+  // registra con email passa poi da "Completa profilo" (dieta/allergie).
   const updatedUser = await prisma.user.update({
     where: { id: user.id },
-    data:  { isVerified: true, isProfileCompleted: true },
+    data:  { isVerified: true },
   });
 
   const accessToken  = generateAccessToken(user.id);

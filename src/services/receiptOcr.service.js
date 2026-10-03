@@ -261,11 +261,16 @@ function reassembleReceiptLines(text) {
 function diffRatio(parsed) {
   if (!parsed) return 1;
   const items = Array.isArray(parsed.items) ? parsed.items : [];
-  const sumItems = items.reduce((acc, i) =>
-    acc + (parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0), 0);
+  const itemDisc = items.reduce((acc, i) => acc + (parseFloat(i.discount) || 0), 0);
+  const sumItems = items.reduce((acc, i) => acc + (parseFloat(i.totalPrice) || 0), 0) - itemDisc;
   const total = parseFloat(parsed.totalAmount) || 0;
   if (total <= 0 || items.length === 0) return 0; // niente da confrontare: non blocca la pipeline
-  return Math.abs(sumItems - total) / total;
+  // Sconti sul totale (es. "SCONTO 10%" dopo il subtotale, sconto app) non
+  // stanno su nessuna riga: prima anche una lettura perfetta di uno scontrino
+  // con "sconto 10%" risultava sbagliata del 10% e veniva scartata/ritentata.
+  // Torna se quadra con o senza quello sconto (come in receipt.controller).
+  const globalDisc = Math.max(0, (parseFloat(parsed.totalDiscount) || 0) - itemDisc);
+  return Math.min(Math.abs(sumItems - total), Math.abs(sumItems - globalDisc - total)) / total;
 }
 
 // >5% di discrepanza = l'LLM ha quasi certamente letto male un prezzo o
@@ -605,27 +610,42 @@ function mergeOverlap(prev, next) {
   return next.slice(start);
 }
 
-async function runMultiPhotoOcr(parts, models, budget = null) {
-  console.info(`[receipt] ${parts.length} foto → una lettura per foto`);
-  const reads = await Promise.all(parts.map((p, i) => visionOcrPortion(
+// Togli da `next` OGNI riga già presente in fondo a `prev` (anche non
+// consecutiva): candidato per foto molto sovrapposte con righe lette in modo
+// diverso. Rischia di togliere un doppione vero: per questo è solo uno dei
+// candidati e vince solo se fa tornare la somma col totale.
+function mergeAggressive(prev, next) {
+  const counts = new Map();
+  prev.slice(-(next.length + 10)).map(looseSignature).forEach(s => counts.set(s, (counts.get(s) || 0) + 1));
+  return next.filter(it => {
+    const s = looseSignature(it);
+    if (counts.get(s) > 0) { counts.set(s, counts.get(s) - 1); return false; }
+    return true;
+  });
+}
+
+// Una lettura senza totale non è "perfetta" (diffRatio darebbe 0): è scarsa.
+const receiptQuality = r => (parseFloat(r?.totalAmount) > 0 ? diffRatio(r) : 0.5);
+const sumItems = items => items.reduce((a, i) => a + (parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0), 0);
+
+function readPhotos(parts, models, budget) {
+  return Promise.all(parts.map((p, i) => visionOcrPortion(
     p,
     `la FOTO ${i + 1} DI ${parts.length} dello stesso scontrino lungo, fotografato in più foto che si sovrappongono (${i === 0 ? 'parte iniziale: di solito contiene intestazione e primi prodotti' : i === parts.length - 1 ? 'parte finale: di solito contiene gli ultimi prodotti e il TOTALE' : 'parte centrale'})`,
     `foto ${i + 1}`,
     models,
     budget,
   ).catch(e => { console.warn(`[receipt] lettura foto ${i + 1} fallita:`, e.message); return null; })));
+}
 
+// Dalle letture delle singole foto costruisce lo scontrino unito con ognuna
+// delle strategie di unione; il totale stampato decide poi quale è giusta.
+function mergedCandidates(reads, label) {
   const ok = reads.filter(Boolean);
-  if (ok.length === 0) return null;
-
-  let items = [];
-  for (const r of ok) {
-    const rItems = Array.isArray(r.items) ? r.items : [];
-    items = items.length ? [...items, ...mergeOverlap(items, rItems)] : rItems;
-  }
+  if (ok.length === 0) return [];
   const firstWith = key => ok.find(r => r[key] != null && r[key] !== '')?.[key] ?? null;
   const lastPositive = key => [...ok].reverse().find(r => parseFloat(r[key]) > 0)?.[key] ?? null;
-  return {
+  const header = {
     storeName:     firstWith('storeName'),
     storeChain:    firstWith('storeChain'),
     storeAddress:  firstWith('storeAddress'),
@@ -634,8 +654,49 @@ async function runMultiPhotoOcr(parts, models, budget = null) {
     // Il totale è in fondo allo scontrino: si prende dall'ultima foto che lo ha.
     totalAmount:   lastPositive('totalAmount'),
     totalDiscount: lastPositive('totalDiscount'),
-    items,
   };
+  const strategies = {
+    aggancio:    mergeOverlap,
+    'tutte':     (prev, next) => next,
+    aggressiva:  mergeAggressive,
+  };
+  return Object.entries(strategies).map(([name, merge]) => {
+    let items = [];
+    for (const r of ok) {
+      const rItems = Array.isArray(r.items) ? r.items : [];
+      items = items.length ? [...items, ...merge(items, rItems)] : rItems;
+    }
+    return { label: `${label}/${name}`, parsed: { ...header, items } };
+  });
+}
+
+async function runMultiPhotoOcr(parts, [modelA, modelB], budget = null) {
+  console.info(`[receipt] ${parts.length} foto → una lettura per foto`);
+  const candidates = [];
+  const describe = (reads, label) => {
+    const perPhoto = reads.map((r, i) => (r
+      ? `foto${i + 1}: ${r.items?.length ?? 0} righe, somma ${sumItems(r.items || []).toFixed(2)}, totale ${r.totalAmount ?? '—'}`
+      : `foto${i + 1}: fallita`)).join(' | ');
+    console.info(`[receipt] letture ${label}: ${perPhoto}`);
+  };
+
+  const readsA = await readPhotos(parts, [modelA, modelB], budget);
+  describe(readsA, modelA);
+  candidates.push(...mergedCandidates(readsA, modelA));
+  if (candidates.length === 0) return null;
+
+  const best = () => candidates.reduce((a, b) => (receiptQuality(b.parsed) < receiptQuality(a.parsed) ? b : a));
+  // Seconda lettura delle foto con l'altro modello, solo se l'unione non torna
+  // col totale e c'è tempo: si confrontano anche quelle combinazioni.
+  if (receiptQuality(best().parsed) > MISMATCH_THRESHOLD && canStartCall(budget)) {
+    const readsB = await readPhotos(parts, [modelB, modelA], budget);
+    describe(readsB, modelB);
+    candidates.push(...mergedCandidates(readsB, modelB));
+  }
+
+  const chosen = best();
+  console.info(`[receipt] unione foto: ${candidates.map(c => `${c.label}=${(receiptQuality(c.parsed) * 100).toFixed(1)}%`).join(', ')} → scelta ${chosen.label} (${chosen.parsed.items.length} righe, somma ${sumItems(chosen.parsed.items).toFixed(2)} vs totale ${chosen.parsed.totalAmount ?? '—'})`);
+  return chosen.parsed;
 }
 
 /**
@@ -644,9 +705,7 @@ async function runMultiPhotoOcr(parts, models, budget = null) {
  * Ritorna il JSON parsato dello scontrino, o lancia se ogni strategia fallisce.
  */
 async function runReceiptOcr(imageBase64, budget = null, parts = null) {
-  // Per scegliere tra più letture: una lettura SENZA totale non è "perfetta"
-  // (diffRatio darebbe 0) ma va considerata scarsa.
-  const quality = r => (parseFloat(r?.totalAmount) > 0 ? diffRatio(r) : 0.5);
+  const quality = receiptQuality;
   const pickBetter = (a, b) => (!a ? b : !b ? a : (quality(b) < quality(a) ? b : a));
 
   // ── PASSO 0: più foto → una lettura per foto, poi unione senza doppioni
@@ -720,4 +779,4 @@ async function runReceiptOcr(imageBase64, budget = null, parts = null) {
   return pickBetter(pickBetter(parsed, splitParsed), multi);
 }
 
-module.exports = { runReceiptOcr, parseOcrJson, callOcrApi, mergeOverlap };
+module.exports = { runReceiptOcr, parseOcrJson, callOcrApi, mergeOverlap, _diffRatio: diffRatio };

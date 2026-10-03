@@ -46,6 +46,16 @@ test('stessa zona fotografata due volte: nessuna riga aggiunta', () => {
   assert.deepStrictEqual(mergeOverlap(foto1, foto2), []);
 });
 
+test('scontrino con "sconto 10%" sul totale: la lettura giusta risulta giusta', () => {
+  const { _diffRatio } = require('../src/services/receiptOcr.service');
+  const parsed = {
+    totalAmount: 123.45,
+    totalDiscount: 12.22 + 1.0,                     // sconto 10% + sconti di riga
+    items: [item('A', 100.67), { ...item('B', 36), discount: 1.0 }],  // somma netta 135,67
+  };
+  assert.ok(_diffRatio(parsed) < 0.01);
+});
+
 test('doppioni veri lontani dalla giunzione restano', () => {
   const foto1 = [item('Yogurt', 0.99), item('Yogurt', 0.99), item('Pane', 1.49)];
   const foto2 = [item('Latte', 1.15), item('Yogurt', 0.99)];

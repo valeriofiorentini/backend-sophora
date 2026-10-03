@@ -59,6 +59,15 @@ async function signup(req, res) {
 
   const existing = await prisma.user.findUnique({ where: { email } });
 
+  // username è @unique: prima un nome già preso faceva fallire create/update
+  // con un 500 (errore Prisma grezzo) e l'app non diceva perché.
+  if (username) {
+    const taken = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+    if (taken && taken.id !== existing?.id) {
+      return error(res, 'Nome utente già in uso, scegline un altro', 409);
+    }
+  }
+
   // Utente esistente MA mai verificato: la registrazione precedente è stata
   // abbandonata (OTP non inserito). Aggiorna i dati e rigenera l'OTP invece
   // di bloccare l'email per sempre.
@@ -71,7 +80,7 @@ async function signup(req, res) {
       data:  { password: hashed, name, surname, username: username || undefined, phone, country, ...langUpdate },
     });
     const otp = await createOtp(existing.id);
-    console.log(`[DEV] OTP per ${email} (ri-registrazione): ${otp}`);
+    if (process.env.NODE_ENV !== 'production') console.log(`[DEV] OTP per ${email} (ri-registrazione): ${otp}`);
     await sendOtpEmail(email, otp, updated.language).catch(e => console.error('[signup] email error:', e.message));
     return success(res, {
       message: 'Registrazione avvenuta. Controlla la tua email per il codice di verifica.',
@@ -87,7 +96,7 @@ async function signup(req, res) {
   });
 
   const otp = await createOtp(user.id);
-  console.log(`[DEV] OTP per ${email}: ${otp}`);
+  if (process.env.NODE_ENV !== 'production') console.log(`[DEV] OTP per ${email}: ${otp}`);
   await sendOtpEmail(email, otp, language).catch(e => console.error('[signup] email error:', e.message));
 
   // Non esporre l'userId nella risposta di signup
@@ -391,7 +400,7 @@ async function resendOtp(req, res) {
   }
 
   const otp = await createOtp(user.id);
-  console.log(`[DEV] Resend OTP per ${email}: ${otp}`);
+  if (process.env.NODE_ENV !== 'production') console.log(`[DEV] Resend OTP per ${email}: ${otp}`);
   await sendOtpEmail(email, otp, user.language).catch(e => console.error('[resendOtp] email error:', e.message));
 
   return success(res, { message: 'Nuovo codice OTP inviato.' });

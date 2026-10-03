@@ -21,40 +21,111 @@ const {
   cleanStr, cleanDate, clampQuantity, clampPrice, clampPercent, normalizeProductKey,
 } = require('../utils/sanitize');
 const { canonicalizeChain } = require('../utils/storeChain');
+const { haversineKm } = require('../services/geo.service');
 
 // ─── Tipi MIME accettati ───────────────────────────────────────────────────────
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 
 const RECEIPT_SCAN_POINTS = 50;
 
+const ADDRESS_STOPWORDS = new Set(['via', 'viale', 'piazza', 'piazzale', 'corso', 'largo', 'strada', 'localita', 'località', 'loc', 'snc']);
+const addressWords = s => (s || '')
+  .toLowerCase()
+  .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+  .split(/\s+/)
+  .filter(w => w.length > 2 && !ADDRESS_STOPWORDS.has(w));
+
+function editDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return row[b.length];
+}
+
+// Parole "uguali a meno di una lettera" (es. "rona" letto dall'OCR al posto di "roma").
+const similarWord = (a, b) =>
+  a === b || (a.length >= 4 && b.length >= 4 && Math.abs(a.length - b.length) <= 1 && editDistance(a, b) <= 1);
+
 // Verifica (best-effort) che il negozio/indirizzo letto dall'OCR corrisponda
-// a un negozio noto di quella catena nel nostro DB — l'OCR può "allucinare"
-// un indirizzo di sfondo nella foto invece di leggere quello vero stampato.
-// Se la catena non ha copertura nel nostro Store DB, non giudica (troppi
-// falsi positivi altrimenti): ritorna null solo quando ha dati per confrontare.
-async function verifyStoreAddress(storeChain, storeAddress) {
+// a un negozio noto di quella catena nel nostro DB — l'OCR può leggere male
+// (es. "Via Rona 1E0179" invece di "Via Roma 177/179") o "allucinare" un
+// indirizzo di sfondo. Se non corrisponde, suggerisce il negozio della catena
+// più simile/vicino all'utente. Se la catena non ha copertura nel nostro
+// Store DB, non giudica (troppi falsi positivi altrimenti).
+async function verifyStoreAddress(storeChain, storeAddress, userLoc) {
   if (!storeChain || !storeAddress) return null;
-  const stores = await prisma.store.findMany({
-    where: { chain: { equals: storeChain, mode: 'insensitive' } },
-    select: { address: true },
-    take: 300,
-  });
+  const targetWords = [...new Set(addressWords(storeAddress))];
+  if (targetWords.length === 0) return null;
+
+  const chainWhere = { chain: { equals: storeChain, mode: 'insensitive' } };
+  const select = { address: true, latitude: true, longitude: true };
+  // Prima: solo i primi 300 negozi della catena, in ordine qualunque — per
+  // catene grandi (Eurospin ~1300) il negozio giusto spesso non c'era e
+  // scattava l'avviso anche con l'indirizzo corretto.
+  let stores = [];
+  if (userLoc) {
+    stores = await prisma.store.findMany({
+      where: {
+        ...chainWhere,
+        latitude:  { gte: userLoc.lat - 0.4, lte: userLoc.lat + 0.4 },
+        longitude: { gte: userLoc.lon - 0.5, lte: userLoc.lon + 0.5 },
+      },
+      select,
+      take: 500,
+    });
+  }
+  if (stores.length === 0) {
+    stores = await prisma.store.findMany({ where: chainWhere, select, take: 3000 });
+  }
   if (stores.length === 0) return null; // nessuna copertura per questa catena
 
-  const normalize = s => (s || '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 2);
-  const targetWords = new Set(normalize(storeAddress));
-  if (targetWords.size === 0) return null;
+  const candidates = [];
+  for (const s of stores) {
+    const words = addressWords(s.address);
+    const exact = targetWords.filter(w => words.includes(w)).length;
+    // Riconosciuto: 2 parole in comune, o tutte quelle disponibili se uno dei
+    // due indirizzi è corto (es. nel DB solo "Via Tiburtina", senza civico).
+    if (words.length > 0 && exact >= Math.min(2, targetWords.length, words.length)) return null;
+    if (!s.address || !/\d/.test(s.address)) continue; // senza via/civico non è un suggerimento utile
+    candidates.push({
+      address: s.address,
+      exact,
+      fuzzy: targetWords.filter(w => words.some(x => similarWord(w, x))).length,
+      distanceKm: userLoc ? haversineKm(userLoc.lat, userLoc.lon, s.latitude, s.longitude) : null,
+    });
+  }
 
-  const matched = stores.some(s => {
-    const words = normalize(s.address);
-    const overlap = words.filter(w => targetWords.has(w)).length;
-    return overlap >= Math.min(2, targetWords.size);
-  });
-  return matched ? null : { storeChain, storeAddress };
+  // Con la posizione: il negozio più vicino tra quelli con almeno una parola
+  // simile, altrimenti il più vicino entro 5 km. Senza posizione: il più
+  // simile, solo se combaciano almeno due parole (via e città) — altrimenti
+  // una "Via Roma" di un'altra città vincerebbe a caso.
+  let best = null;
+  if (userLoc) {
+    const byDistance = (a, b) => a.distanceKm - b.distanceKm;
+    best = candidates.filter(c => c.fuzzy >= 1).sort(byDistance)[0]
+      || candidates.filter(c => c.distanceKm <= 5).sort(byDistance)[0]
+      || null;
+  } else {
+    best = candidates
+      .filter(c => c.fuzzy >= 2)
+      .sort((a, b) => b.fuzzy - a.fuzzy || b.exact - a.exact)[0] || null;
+  }
+  const confident = !!best;
+  return {
+    storeChain,
+    storeAddress,
+    ...(confident ? {
+      suggestedAddress: best.address,
+      suggestedDistanceKm: best.distanceKm != null ? Math.round(best.distanceKm * 10) / 10 : null,
+    } : {}),
+  };
 }
 
 // Ricompone più foto (es. metà superiore + metà inferiore di uno scontrino
@@ -148,7 +219,14 @@ async function scanReceipt(req, res) {
   parsed.receiptDate   = cleanDate(parsed.receiptDate);
 
   // 3a2. Verifica negozio/indirizzo contro il DB Store (best-effort, vedi sopra).
-  const addressMismatch = await verifyStoreAddress(parsed.storeChain, parsed.storeAddress)
+  const userPos = await prisma.user.findUnique({
+    where: { id: req.userId },
+    select: { latitude: true, longitude: true },
+  }).catch(() => null);
+  const userLoc = userPos?.latitude != null && userPos?.longitude != null
+    ? { lat: userPos.latitude, lon: userPos.longitude }
+    : null;
+  const addressMismatch = await verifyStoreAddress(parsed.storeChain, parsed.storeAddress, userLoc)
     .catch(e => { console.warn('[receipt] verifyStoreAddress error:', e.message); return null; });
   if (addressMismatch) {
     console.warn(`[receipt] INDIRIZZO NON TROVATO per ${addressMismatch.storeChain}: "${addressMismatch.storeAddress}" non corrisponde a nessun negozio noto di questa catena.`);
@@ -200,13 +278,20 @@ async function scanReceipt(req, res) {
       (a, i) => a + ((parseFloat(i.totalPrice) || 0) - (parseFloat(i.discount) || 0)),
       0,
     );
-    const diff = Math.round((itemsNetSum - totalAmount) * 100) / 100;
+    // Sconti sul totale (es. "APP YOGURT DA BERE -0,40" dopo il SUBTOTALE) non
+    // sono su nessuna riga: prima facevano scattare l'avviso anche su scontrini
+    // letti perfettamente. Quadra se torna con o senza quello sconto (l'AI non
+    // sempre lo separa dai prezzi di riga).
+    const globalDiscount = Math.max(0, parsed.totalDiscount - itemDiscSum);
+    const diffRaw = Math.round((itemsNetSum - totalAmount) * 100) / 100;
+    const diffDisc = Math.round((itemsNetSum - globalDiscount - totalAmount) * 100) / 100;
+    const diff = Math.abs(diffDisc) < Math.abs(diffRaw) ? diffDisc : diffRaw;
     if (Math.abs(diff) > 0.05) {
       console.warn(
         `[receipt] TOTALE NON QUADRA (receipt=${receipt.id}, store=${parsed.storeChain || parsed.storeName || '?'}): ` +
         `somma righe=${itemsNetSum.toFixed(2)} vs totale scontrino=${totalAmount.toFixed(2)} (diff=${diff.toFixed(2)}) — possibile prezzo letto male dall'OCR.`,
       );
-      priceMismatch = { itemsSum: Math.round(itemsNetSum * 100) / 100, receiptTotal: totalAmount, diff };
+      priceMismatch = { itemsSum: Math.round((totalAmount + diff) * 100) / 100, receiptTotal: totalAmount, diff };
     }
   }
 
@@ -456,6 +541,23 @@ async function deleteReceipt(req, res) {
   return success(res, { message: 'Scontrino eliminato' });
 }
 
+// ─── PATCH /api/receipts/:id/address ─────────────────────────────────────────
+// L'utente conferma l'indirizzo suggerito (negozio noto più vicino) al posto
+// di quello letto male dall'OCR.
+async function updateReceiptAddress(req, res) {
+  const storeAddress = cleanStr(req.body.storeAddress);
+  if (!storeAddress) return error(res, 'Indirizzo obbligatorio');
+  const receipt = await prisma.receipt.findUnique({ where: { id: req.params.id } });
+  if (!receipt || receipt.userId !== req.userId) {
+    return error(res, 'Scontrino non trovato', 404);
+  }
+  const updated = await prisma.receipt.update({
+    where: { id: req.params.id },
+    data:  { storeAddress: storeAddress.slice(0, 200) },
+  });
+  return success(res, { receipt: updated });
+}
+
 // ─── POST /api/receipts/export/excel (solo Premium) ──────────────────────────
 // Genera il CSV e lo invia via email all'utente (non download diretto)
 async function exportReceiptsExcel(req, res) {
@@ -528,4 +630,4 @@ async function exportReceiptsExcel(req, res) {
   }
 }
 
-module.exports = { scanReceipt, getReceipts, getReceiptById, deleteReceipt, getReceiptStats, exportReceiptsExcel };
+module.exports = { scanReceipt, getReceipts, getReceiptById, deleteReceipt, updateReceiptAddress, getReceiptStats, exportReceiptsExcel };

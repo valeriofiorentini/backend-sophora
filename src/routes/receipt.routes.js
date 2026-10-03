@@ -16,5 +16,6 @@ router.get('/stats',          asyncHandler(c.getReceiptStats));
 router.post('/export/excel',  asyncHandler(c.exportReceiptsExcel));
 router.get('/:id',            asyncHandler(c.getReceiptById));
 router.delete('/:id',  asyncHandler(c.deleteReceipt));
+router.patch('/:id/address', asyncHandler(c.updateReceiptAddress));
 
 module.exports = router;

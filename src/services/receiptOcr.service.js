@@ -559,23 +559,49 @@ async function runVisionSplitOcr(imageBase64, models, budget = null) {
 const looseSignature = it =>
   `${String(it?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}|${(parseFloat(it?.totalPrice) || 0).toFixed(2)}`;
 
-// Toglie dall'inizio di `next` la sequenza di righe uguale alla fine di
-// `prev` (la parte in comune tra due foto). Se non c'è una sequenza esatta
-// (es. una riga letta diversa nelle due foto), toglie solo le righe INIZIALI
-// consecutive di `next` già presenti a fine `prev`, fermandosi alla prima
-// nuova: un prodotto ripetuto per davvero più avanti non viene toccato.
+// Restituisce le righe di `next` che NON sono già in `prev` (la parte in
+// comune tra due foto consecutive dello stesso scontrino).
+// Prima si cercava la sovrapposizione solo nelle ultime 30 righe e nelle
+// prime 8: con foto quasi uguali (40-50 righe in comune, caso reale) non
+// trovava l'aggancio e raddoppiava decine di prodotti.
+//  1. AGGANCIO: cerca in `next` le ultime righe di `prev` (3 o 2 consecutive,
+//     tollerando che le ultime 1-2 siano lette diversamente) → le righe nuove
+//     sono quelle dopo. Si usa la PRIMA occorrenza: la parte in comune sta
+//     all'inizio di `next`, i doppioni veri più avanti restano.
+//  2. CONTENUTA: se quasi tutte le righe di `next` sono già in fondo a `prev`
+//     (stessa zona fotografata due volte) → niente di nuovo.
+//  3. Altrimenti toglie solo le righe iniziali consecutive già presenti.
 function mergeOverlap(prev, next) {
-  const maxK = Math.min(prev.length, next.length, 30);
-  for (let k = maxK; k >= 1; k--) {
-    let same = true;
-    for (let j = 0; j < k; j++) {
-      if (looseSignature(prev[prev.length - k + j]) !== looseSignature(next[j])) { same = false; break; }
+  if (!prev.length || !next.length) return next;
+  const P = prev.map(looseSignature);
+  const N = next.map(looseSignature);
+
+  for (const len of [3, 2]) {
+    for (let skip = 0; skip <= 2; skip++) {
+      const end = P.length - skip;          // l'àncora finisce qui in prev (escluso)
+      if (end - len < 0) continue;
+      const anchor = P.slice(end - len, end);
+      // Àncore fatte solo di righe banali e ripetute (es. "Busta ortofrutta 0,02")
+      // agganciano a caso: servono almeno 2 righe diverse.
+      if (new Set(anchor).size < 2) continue;
+      for (let q = 0; q + len <= N.length; q++) {
+        if (anchor.every((s, i) => N[q + i] === s)) return next.slice(q + len + skip);
+      }
     }
-    if (same) return next.slice(k);
   }
-  const tail = new Set(prev.slice(-8).map(looseSignature));
+
+  const window = P.slice(-(N.length + 10));
+  const counts = new Map();
+  window.forEach(s => counts.set(s, (counts.get(s) || 0) + 1));
+  let found = 0;
+  for (const s of N) {
+    if (counts.get(s) > 0) { found++; counts.set(s, counts.get(s) - 1); }
+  }
+  if (found >= Math.max(2, Math.ceil(N.length * 0.8))) return [];
+
+  const tail = new Set(P.slice(-15));
   let start = 0;
-  while (start < next.length && start < 8 && tail.has(looseSignature(next[start]))) start++;
+  while (start < N.length && tail.has(N[start])) start++;
   return next.slice(start);
 }
 

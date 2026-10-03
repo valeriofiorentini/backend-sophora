@@ -148,10 +148,14 @@ async function combineReceiptPhotos(files, rotations = []) {
     if (deg % 90 === 0 && deg !== 0) im.rotate(360 - deg);
     return im;
   }));
+  const toDataUrl = async im =>
+    `data:image/jpeg;base64,${(await im.quality(85).getBufferAsync(Jimp.MIME_JPEG)).toString('base64')}`;
   if (images.length === 1) {
-    const buffer = await images[0].quality(85).getBufferAsync(Jimp.MIME_JPEG);
-    return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+    return { combined: await toDataUrl(images[0]), parts: null };
   }
+  // Le singole foto (già raddrizzate) servono anche separate: l'OCR le legge
+  // una per una a piena risoluzione (receiptOcr.runMultiPhotoOcr).
+  const parts = await Promise.all(images.map(im => toDataUrl(im.clone())));
   const width = Math.min(...images.map(im => im.bitmap.width));
   const resized = images.map(im => im.clone().resize(width, Jimp.AUTO));
   // Fascia scura con "=== FOTO N ===" tra una foto e l'altra: le foto di uno
@@ -174,8 +178,7 @@ async function combineReceiptPhotos(files, rotations = []) {
     combined.composite(im, 0, y);
     y += im.bitmap.height;
   });
-  const buffer = await combined.quality(85).getBufferAsync(Jimp.MIME_JPEG);
-  return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+  return { combined: await toDataUrl(combined), parts };
 }
 
 // ─── Scansione in background ──────────────────────────────────────────────────
@@ -268,8 +271,11 @@ async function scanReceiptCore(req, res) {
   try { rotations = JSON.parse(req.body?.rotations || '[]'); } catch { rotations = []; }
   if (!Array.isArray(rotations)) rotations = [];
   let imageBase64;
+  let photoParts = null;
   try {
-    imageBase64 = await combineReceiptPhotos(files, rotations);
+    const combinedPhotos = await combineReceiptPhotos(files, rotations);
+    imageBase64 = combinedPhotos.combined;
+    photoParts = combinedPhotos.parts;
   } catch (e) {
     console.warn('[receipt] combineReceiptPhotos fallito, uso solo la prima foto:', e.message);
     imageBase64 = `data:${files[0].mimetype};base64,${files[0].buffer.toString('base64')}`;
@@ -290,7 +296,7 @@ async function scanReceiptCore(req, res) {
   // 3. OCR (pipeline completa nel service: ibrida → vision con doppio modello)
   let parsed;
   try {
-    parsed = await runReceiptOcr(imageBase64, budget);
+    parsed = await runReceiptOcr(imageBase64, budget, photoParts);
   } catch (ocrErr) {
     console.error('[receipt] OCR error:', ocrErr.message);
     await prisma.receipt.update({

@@ -46,7 +46,35 @@ function parseOcrJson(raw) {
   const first = s.indexOf('{');
   const last  = s.lastIndexOf('}');
   if (first !== -1 && last !== -1 && last > first) s = s.slice(first, last + 1);
-  return JSON.parse(s);
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    const repaired = repairTruncatedJson(s);
+    if (repaired) {
+      console.warn(`[receipt] risposta AI tagliata (${s.length} caratteri): recuperati ${repaired.items?.length ?? 0} prodotti completi`);
+      return repaired;
+    }
+    throw e;
+  }
+}
+
+// Risposta troncata a metà di un prodotto (scontrino lunghissimo): si taglia
+// all'ultimo oggetto completo e si chiudono array/oggetto. I totali stanno
+// prima di "items" (vedi prompt), quindi restano; se manca qualche prodotto
+// in fondo lo segnala la riconciliazione somma/totale.
+function repairTruncatedJson(s) {
+  let end = s.length;
+  for (let tries = 0; tries < 400; tries++) {
+    end = s.lastIndexOf('}', end - 1);
+    if (end <= 0) return null;
+    for (const tail of [']}', '}', ']}]}']) {
+      try {
+        const parsed = JSON.parse(s.slice(0, end + 1) + tail);
+        if (parsed && Array.isArray(parsed.items)) return parsed;
+      } catch { /* prova il taglio precedente */ }
+    }
+  }
+  return null;
 }
 
 // V5: se il fine-tuned model è pronto, usa quello (supera entrambi)
@@ -88,8 +116,10 @@ async function callOcrApi(model, messages, attempt = 0, budget = null) {
       model,
       messages,
       response_format: { type: 'json_object' },
-      // 8000 token: uno scontrino con ~90 prodotti sta dentro senza troncare il JSON.
-      max_tokens: 8000,
+      // Prima 8000: con scontrini da ~100 righe in JSON indentato la risposta
+      // veniva tagliata ("Expected ',' or ']'..." nei log). Ora JSON compatto
+      // + 16000 (massimo di gpt-4o; Claude e Gemini ne reggono di più).
+      max_tokens: 16000,
       // temperature 0: estrazione deterministica, l'LLM NON inventa né traduce i nomi
       temperature: 0,
       store: false,   // GDPR: Zero Data Retention
@@ -433,10 +463,20 @@ function dedupeSeamItems(topItems, botItems) {
 }
 
 /** Un solo tentativo (con un fallback di modello) su UNA metà dell'immagine. */
-async function visionOcrHalf(imageB64, isTop, [modelA, modelB], budget = null) {
+function visionOcrHalf(imageB64, isTop, models, budget = null) {
+  return visionOcrPortion(
+    imageB64,
+    `la ${isTop ? 'METÀ SUPERIORE' : 'METÀ INFERIORE'} di uno scontrino lungo, fotografato/diviso in due parti che si sovrappongono leggermente al centro`,
+    isTop ? 'alto' : 'basso',
+    models,
+    budget,
+  );
+}
+
+async function visionOcrPortion(imageB64, portionDesc, label, [modelA, modelB], budget = null) {
   const prompt = `${RECEIPT_PROMPT}
 
-ATTENZIONE — QUESTA È SOLO UNA PORZIONE: questa immagine è la ${isTop ? 'METÀ SUPERIORE' : 'METÀ INFERIORE'} di uno scontrino lungo, fotografato/diviso in due parti che si sovrappongono leggermente al centro. Estrai SOLO i prodotti effettivamente visibili in QUESTA porzione. Se l'intestazione (negozio, indirizzo, data) o il totale finale non sono visibili qui, lasciali null: verranno presi dall'altra metà.`;
+ATTENZIONE — QUESTA È SOLO UNA PORZIONE: questa immagine è ${portionDesc}. Estrai SOLO i prodotti effettivamente visibili in QUESTA porzione. Se l'intestazione (negozio, indirizzo, data) o il totale finale non sono visibili qui, lasciali null: verranno presi dalle altre parti.`;
   const messages = [{
     role: 'user',
     content: [
@@ -449,7 +489,7 @@ ATTENZIONE — QUESTA È SOLO UNA PORZIONE: questa immagine è la ${isTop ? 'MET
     return parseOcrJson(resp.choices[0].message.content);
   } catch (e) {
     if (!canStartCall(budget)) throw e;
-    console.warn(`[receipt] vision split (${isTop ? 'alto' : 'basso'}) modello primario fallito (${e.message}) → fallback`);
+    console.warn(`[receipt] vision porzione (${label}) modello primario fallito (${e.message}) → fallback`);
     const resp = await callOcrApi(modelB, messages, 0, budget);
     return parseOcrJson(resp.choices[0].message.content);
   }
@@ -498,15 +538,97 @@ async function runVisionSplitOcr(imageBase64, models, budget = null) {
   };
 }
 
+// ─── Più foto dello stesso scontrino: una lettura per foto ───────────────────
+// Prima le foto venivano solo incollate in un'immagine altissima (3 foto ≈
+// 1500×6000): i modelli la rimpiccioliscono e sbagliavano parecchio, e la
+// risposta per ~100 righe veniva tagliata. Ogni foto letta a parte è a piena
+// risoluzione e produce una risposta corta; poi si uniscono le liste
+// togliendo le righe ripetute dove una foto si sovrappone alla successiva.
+
+// Firma "tollerante" per confrontare la stessa riga letta in due foto diverse
+// (punteggiatura/spazi possono cambiare tra una lettura e l'altra).
+const looseSignature = it =>
+  `${String(it?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}|${(parseFloat(it?.totalPrice) || 0).toFixed(2)}`;
+
+// Toglie dall'inizio di `next` la sequenza di righe uguale alla fine di
+// `prev` (la parte in comune tra due foto). Se non c'è una sequenza esatta
+// (es. una riga letta diversa nelle due foto), toglie solo le righe INIZIALI
+// consecutive di `next` già presenti a fine `prev`, fermandosi alla prima
+// nuova: un prodotto ripetuto per davvero più avanti non viene toccato.
+function mergeOverlap(prev, next) {
+  const maxK = Math.min(prev.length, next.length, 30);
+  for (let k = maxK; k >= 1; k--) {
+    let same = true;
+    for (let j = 0; j < k; j++) {
+      if (looseSignature(prev[prev.length - k + j]) !== looseSignature(next[j])) { same = false; break; }
+    }
+    if (same) return next.slice(k);
+  }
+  const tail = new Set(prev.slice(-8).map(looseSignature));
+  let start = 0;
+  while (start < next.length && start < 8 && tail.has(looseSignature(next[start]))) start++;
+  return next.slice(start);
+}
+
+async function runMultiPhotoOcr(parts, models, budget = null) {
+  console.info(`[receipt] ${parts.length} foto → una lettura per foto`);
+  const reads = await Promise.all(parts.map((p, i) => visionOcrPortion(
+    p,
+    `la FOTO ${i + 1} DI ${parts.length} dello stesso scontrino lungo, fotografato in più foto che si sovrappongono (${i === 0 ? 'parte iniziale: di solito contiene intestazione e primi prodotti' : i === parts.length - 1 ? 'parte finale: di solito contiene gli ultimi prodotti e il TOTALE' : 'parte centrale'})`,
+    `foto ${i + 1}`,
+    models,
+    budget,
+  ).catch(e => { console.warn(`[receipt] lettura foto ${i + 1} fallita:`, e.message); return null; })));
+
+  const ok = reads.filter(Boolean);
+  if (ok.length === 0) return null;
+
+  let items = [];
+  for (const r of ok) {
+    const rItems = Array.isArray(r.items) ? r.items : [];
+    items = items.length ? [...items, ...mergeOverlap(items, rItems)] : rItems;
+  }
+  const firstWith = key => ok.find(r => r[key] != null && r[key] !== '')?.[key] ?? null;
+  const lastPositive = key => [...ok].reverse().find(r => parseFloat(r[key]) > 0)?.[key] ?? null;
+  return {
+    storeName:     firstWith('storeName'),
+    storeChain:    firstWith('storeChain'),
+    storeAddress:  firstWith('storeAddress'),
+    receiptDate:   firstWith('receiptDate'),
+    paymentMethod: [...ok].reverse().find(r => r.paymentMethod)?.paymentMethod ?? null,
+    // Il totale è in fondo allo scontrino: si prende dall'ultima foto che lo ha.
+    totalAmount:   lastPositive('totalAmount'),
+    totalDiscount: lastPositive('totalDiscount'),
+    items,
+  };
+}
+
 /**
  * Entry point unico: ibrida → vision pura (split se lo scontrino è lungo,
  * altrimenti singola immagine) con doppio modello e verifica somma.
  * Ritorna il JSON parsato dello scontrino, o lancia se ogni strategia fallisce.
  */
-async function runReceiptOcr(imageBase64, budget = null) {
+async function runReceiptOcr(imageBase64, budget = null, parts = null) {
+  // Per scegliere tra più letture: una lettura SENZA totale non è "perfetta"
+  // (diffRatio darebbe 0) ma va considerata scarsa.
+  const quality = r => (parseFloat(r?.totalAmount) > 0 ? diffRatio(r) : 0.5);
+  const pickBetter = (a, b) => (!a ? b : !b ? a : (quality(b) < quality(a) ? b : a));
+
+  // ── PASSO 0: più foto → una lettura per foto, poi unione senza doppioni
+  let multi = null;
+  if (Array.isArray(parts) && parts.length > 1) {
+    multi = await runMultiPhotoOcr(parts, [OCR_MODEL_ACCURATE, OCR_MODEL_FALLBACK], budget)
+      .catch(e => { console.warn('[receipt] lettura per foto fallita:', e.message); return null; });
+    if (multi && quality(multi) <= MISMATCH_THRESHOLD) return multi;
+    if (multi && !canStartCall(budget)) return multi;
+    if (multi) {
+      console.warn(`[receipt] lettura per foto non riconcilia (diff=${(quality(multi) * 100).toFixed(1)}%) → provo anche le altre strategie e tengo la migliore`);
+    }
+  }
+
   // ── PASSO 1: pipeline ibrida (testo OCR + immagine)
   let parsed = await tryOcrSpacePipeline(imageBase64, budget);
-  if (parsed) return parsed;
+  if (parsed) return pickBetter(parsed, multi);
 
   const fineTunedModel = await getOcrModel(); // null = nessun fine-tuned disponibile
   const firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
@@ -520,11 +642,11 @@ async function runReceiptOcr(imageBase64, budget = null) {
   // metà (es. un prodotto perso/duplicato sulla cucitura) non aveva un
   // secondo tentativo. Se non torna, si passa al consensus a 3 modelli
   // sull'immagine intera (passo 3) come già succedeva per gli scontrini corti.
-  const splitDiff = splitParsed ? diffRatio(splitParsed) : 1;
+  const splitDiff = splitParsed ? quality(splitParsed) : 1;
   if (splitParsed && splitDiff <= MISMATCH_THRESHOLD) return splitParsed;
-  if (splitParsed && !canStartCall(budget)) {
-    console.warn('[receipt] vision split non riconcilia ma il tempo massimo è quasi esaurito → uso lo split');
-    return splitParsed;
+  if ((splitParsed || multi) && !canStartCall(budget)) {
+    console.warn('[receipt] tempo massimo quasi esaurito → tengo la lettura migliore ottenuta');
+    return pickBetter(splitParsed, multi);
   }
   if (splitParsed) {
     console.warn(`[receipt] vision split non riconcilia (diff=${(splitDiff * 100).toFixed(1)}%) → tentativo con consensus a 3 modelli su immagine intera`);
@@ -539,21 +661,28 @@ async function runReceiptOcr(imageBase64, budget = null) {
     ],
   }];
 
-  parsed = await consensusOcr(
-    messages,
-    'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.',
-    [firstModel, OCR_MODEL_FALLBACK, OCR_MODEL_THIRD],
-    budget,
-  );
-
-  // Nessuno dei due percorsi riconcilia perfettamente: tieni il migliore dei
-  // due invece di scartare a priori il tentativo split (che aveva comunque
-  // il vantaggio di "vedere" ogni metà a piena risoluzione).
-  if (splitParsed && diffRatio(parsed) > splitDiff) {
-    console.warn('[receipt] consensus su immagine intera peggiore dello split → uso comunque lo split');
-    return splitParsed;
+  try {
+    parsed = await consensusOcr(
+      messages,
+      'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.',
+      [firstModel, OCR_MODEL_FALLBACK, OCR_MODEL_THIRD],
+      budget,
+    );
+  } catch (e) {
+    // Prima un errore qui buttava via anche le letture già riuscite (split,
+    // foto per foto) e l'utente vedeva solo "errore".
+    const fallback = pickBetter(splitParsed, multi);
+    if (fallback) {
+      console.warn('[receipt] consensus su immagine intera fallito → uso la lettura migliore già ottenuta:', e.message);
+      return fallback;
+    }
+    throw e;
   }
-  return parsed;
+
+  // Nessun percorso riconcilia perfettamente: tieni il migliore invece di
+  // scartare a priori split / foto per foto (che "vedevano" ogni parte a
+  // piena risoluzione).
+  return pickBetter(pickBetter(parsed, splitParsed), multi);
 }
 
-module.exports = { runReceiptOcr, parseOcrJson, callOcrApi };
+module.exports = { runReceiptOcr, parseOcrJson, callOcrApi, mergeOverlap };

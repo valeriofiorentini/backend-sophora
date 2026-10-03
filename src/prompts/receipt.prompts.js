@@ -114,17 +114,22 @@ REGOLE CRITICHE — seguile nell'ordine:
 
 7. DATA: Lo scontrino può mostrare la data in formato GG/MM/AAAA oppure GG/MM/AA — converti sempre in YYYY-MM-DD.
 
-Struttura JSON da restituire:
+FORMATO DELLA RISPOSTA (obbligatorio): JSON COMPATTO su UNA SOLA RIGA, senza spazi, a capo o indentazione. Nei prodotti OMETTI i campi "barcode", "discount" e "discountPercent" quando sono null o 0. Scrivi i campi nell'ordine dello schema qui sotto: TOTALI PRIMA della lista "items". (Gli scontrini lunghi hanno 80-100 righe: una risposta "formattata" viene tagliata a metà e va persa.)
+
+Struttura JSON da restituire (qui indentata solo per leggibilità — tu rispondi compatto):
 {
   "storeName": "nome negozio completo o null",
   "storeChain": "catena esatta tra: Coop, Conad, Esselunga, Carrefour, Lidl, Eurospin, Penny, Famila, Top Supermercati, Aldi, Pam, Despar, Tigros, Pim, Iper, Iper Triscount, MD, Todis, Pewex, Bennet, Sigma, Gigante, Interspar, Crai, Selex, Dok, Emisfero, A&O, Maxì, Iperal, Iperstore, Basko, Galassia, Ekom, Acqua e Sapone, Caddy's, Pellicano, Fortè, Unes, U2 Supermercato, Iper La grande i, Carrefour Market, Carrefour Express, Carrefour Gourmet, Carrefour Bio, Conad City, Conad Superstore, Ipercoop, Coop Alleanza 3.0, Unicoop Firenze, Unicoop Tirreno, Nova Coop, Coop Lombardia, Coop Liguria, Supercoop, Crai Store, Crai Extra, Sidis, Coal, Agorà, Spar, Eurospar, Interspar, Despar Express, Aldi, Lidl, Penny Market, Prix, In's Mercato, Spazio Conad, Simply, Eté, Dpiù, Quì, Maxstore, Superstore, Auchan, Panorama, Iperpanorama, Ipercasalinghi, Risparmio Casa, Normal, Action, Primark Food, Bennet, Cattel, Gross Iper, Iper Montebello, Iper Tosano, Tosano, Galassia Ipermercato, Ok! Supermercato, Cedi, Ge.Al, Megamark, Finiper, Iper Finiper, Supermercati Tigre, Tigre, G.S. Supermercato, Gs, Superconti, Punto Simply, Pellegrini, Multicedi, Vitalia, Poli, Multicash, Metro, Makro, Costco, Globo, Emisfero, Gigante Verde, Superstore Auchan, Iperstanda, Standa, GS Carrefour, Billa, Rewe, Real, Migros, Cedi, Cedi Lombardo, Cedi Marche o null",
   "storeAddress": "indirizzo completo o null",
   "receiptDate": "YYYY-MM-DD o null",
+  "totalAmount": 0.00,
+  "totalDiscount": 0.00,
+  "paymentMethod": "contanti/carta/buono pasto/misto o null",
   "items": [
     {
       "name": "ESATTAMENTE come stampato (solo troncature ovvie espanse, mai marchi sostituiti)",
       "rawName": "testo grezzo esatto della riga",
-      "barcode": "codice EAN se presente o null",
+      "barcode": "codice EAN se presente (ometti se assente)",
       "quantity": 1,
       "unitPrice": 0.00,
       "totalPrice": 0.00,
@@ -132,10 +137,7 @@ Struttura JSON da restituire:
       "discountPercent": null,
       "category": "una tra: frutta_verdura, carne_pesce, latticini, pane_pasta, bevande, dolci_snack, surgelati, dispensa, igiene_casa, altro"
     }
-  ],
-  "totalAmount": 0.00,
-  "totalDiscount": 0.00,
-  "paymentMethod": "contanti/carta/buono pasto/misto o null"
+  ]
 }`;
 
 // NON USATO al momento — approccio alternativo "solo testo" (senza immagine).

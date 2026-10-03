@@ -148,8 +148,9 @@ async function getBasketAdvice(req, res) {
     m.get(h.productKey).push(Number(h.price));
   }
 
-  // 1. Get processed receipts count in the last 90 days for Option B
-  const receiptCount = await prisma.receipt.count({
+  // Scontrini dell'utente nella finestra: conteggio (media per spesa) e
+  // negozi dove compra già, con l'indirizzo più frequente per catena.
+  const userReceipts = await prisma.receipt.findMany({
     where: {
       userId: req.userId,
       status: 'processed',
@@ -158,8 +159,24 @@ async function getBasketAdvice(req, res) {
         { receiptDate: null, processedAt: { gte: new Date(Date.now() - BASKET_WINDOW_DAYS * 86_400_000) } },
       ],
     },
+    select: { storeChain: true, storeAddress: true },
   });
-  const totalReceipts = receiptCount || 1;
+  const totalReceipts = userReceipts.length || 1;
+
+  const addressCounts = new Map(); // chain → Map(address → count)
+  for (const r of userReceipts) {
+    if (!r.storeChain) continue;
+    if (!addressCounts.has(r.storeChain)) addressCounts.set(r.storeChain, new Map());
+    if (r.storeAddress) {
+      const m = addressCounts.get(r.storeChain);
+      m.set(r.storeAddress, (m.get(r.storeAddress) || 0) + 1);
+    }
+  }
+  const yourAddress = chain => {
+    const m = addressCounts.get(chain);
+    if (!m || m.size === 0) return null;
+    return [...m.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  };
 
   // Per ogni catena: risparmio stimato sul sottoinsieme coperto
   const chains = [];
@@ -199,6 +216,8 @@ async function getBasketAdvice(req, res) {
 
     chains.push({
       chain:                      chainName,
+      isYourChain:                addressCounts.has(chainName),
+      address:                    yourAddress(chainName),
       coveredProducts:            details.length,
       coveragePct:                Math.round((details.length / basket.length) * 100),
       estimatedSaving:            round2(savings90Days),

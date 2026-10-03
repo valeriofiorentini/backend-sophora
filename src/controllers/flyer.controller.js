@@ -179,6 +179,23 @@ async function indexFlyerItemsInBackground(items, storeChain, validUntil) {
 
 // ── Semantic search ────────────────────────────────────────────────────────
 
+// Lo stesso prodotto arriva più volte (stessa offerta importata da più
+// volantini/punti vendita della catena): un risultato per nome+catena+prezzo,
+// tenendo il primo (il più pertinente, i risultati arrivano già ordinati).
+function dedupeOffers(items) {
+  const seen = new Set();
+  return items.filter(it => {
+    const key = [
+      String(it.name || '').toLowerCase().replace(/\s+/g, ' ').trim(),
+      String(it.storeChain || '').toLowerCase(),
+      it.price != null ? Number(it.price).toFixed(2) : '',
+    ].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function semanticSearch(req, res) {
   const { q, storeChain, lat, lon } = req.query;
   if (!q?.trim()) return error(res, 'q (query) obbligatorio');
@@ -192,9 +209,10 @@ async function semanticSearch(req, res) {
 
   let results = [];
   try {
+    // Ne chiede di più: dopo aver tolto i doppioni ne restano comunque fino a 20.
     results = await qdrant.searchFlyerItems({
       vector,
-      limit: 20,
+      limit: 60,
       scoreThreshold: 0.58,
       filters: storeChain ? { storeChain } : {},
     });
@@ -207,7 +225,7 @@ async function semanticSearch(req, res) {
     return keywordFallback(req, res, q, storeChain);
   }
 
-  const items = results.map(r => ({
+  const items = dedupeOffers(results.map(r => ({
     score: parseFloat(r.score.toFixed(3)),
     name: r.payload.name,
     category: r.payload.category,
@@ -216,7 +234,7 @@ async function semanticSearch(req, res) {
     originalPrice: r.payload.original_price,
     storeChain: r.payload.store_chain,
     promoId: r.payload.promo_id,
-  }));
+  }))).slice(0, 20);
 
   return success(res, { items, query: q, source: 'semantic', total: items.length });
 }
@@ -228,15 +246,16 @@ async function keywordFallback(req, res, q, storeChain) {
       productName: { contains: q, mode: 'insensitive' },
       ...(storeChain && { storeChain: { contains: storeChain, mode: 'insensitive' } }),
     },
-    take: 20,
+    take: 60,
     orderBy: { createdAt: 'desc' },
   });
+  const items = dedupeOffers(promos.map(p => ({
+    name: p.productName, price: p.price, originalPrice: p.originalPrice,
+    storeChain: p.storeChain, promoId: p.id, score: null,
+  }))).slice(0, 20);
   return success(res, {
-    items: promos.map(p => ({
-      name: p.productName, price: p.price, originalPrice: p.originalPrice,
-      storeChain: p.storeChain, promoId: p.id, score: null,
-    })),
-    query: q, source: 'keyword', total: promos.length,
+    items,
+    query: q, source: 'keyword', total: items.length,
   });
 }
 

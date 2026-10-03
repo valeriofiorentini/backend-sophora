@@ -16,6 +16,14 @@ test('catene note normalizzate a forma canonica', () => {
   assert.strictEqual(canonicalizeChain('SUPERMERCATI PIM'), 'Pim');
 });
 
+test("In's Mercato non viene confuso con Mercatò", () => {
+  assert.strictEqual(canonicalizeChain("In's Mercato"), "In's Mercato");
+  assert.strictEqual(canonicalizeChain("IN'S MERCATO SPA"), "In's Mercato");
+  assert.strictEqual(canonicalizeChain('INS MERCATO'), "In's Mercato");
+  assert.strictEqual(canonicalizeChain('Mercatò'), 'Mercatò');
+  assert.strictEqual(canonicalizeChain('MERCATO'), 'Mercatò');
+});
+
 test('catena non mappata: solo ripulita (trim + spazi singoli)', () => {
   assert.strictEqual(canonicalizeChain('  Bottega   Verde '), 'Bottega Verde');
 });

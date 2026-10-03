@@ -36,6 +36,9 @@ const ALIASES = [
   [/\bemisfero\b/i,                 'Emisfero'],
   [/\btosano\b/i,                   'Tosano'],
   [/\brossetto\b/i,                 'Rossetto'],
+  // Prima di Mercatò: "In's Mercato" (gruppo PAM) è un'altra catena, ma la
+  // regex di Mercatò la catturava per la sola parola "mercato".
+  [/\bin['’`]?\s*s\s+mercato\b/i,   "In's Mercato"],
   [/\bmercat[oò]\b/i,               'Mercatò'],
   [/\biper\s*triscount\b/i,         'Ipertriscount'],
 ];

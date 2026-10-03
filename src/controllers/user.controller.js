@@ -600,6 +600,9 @@ async function deleteAccount(req, res) {
   // 3. Elimina l'utente (cascade su tutte le relazioni con onDelete: Cascade)
 
   await prisma.user.delete({ where: { id: req.userId } });
+  // Le foto degli scontrini stanno su disco, non nel DB: vanno cancellate a parte.
+  await require('../utils/receiptImages').deleteUserReceiptImages(req.userId)
+    .catch(e => console.warn('[deleteAccount] foto scontrini non cancellate:', e.message));
 
   // Invalida subito la cache auth: il token non deve più passare
   const { invalidateAuthCache } = require('../middleware/auth');

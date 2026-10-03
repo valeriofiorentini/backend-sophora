@@ -22,6 +22,9 @@ const {
 } = require('../utils/sanitize');
 const { canonicalizeChain } = require('../utils/storeChain');
 const { haversineKm } = require('../services/geo.service');
+const {
+  receiptImagePath, saveReceiptImage, deleteReceiptImage,
+} = require('../utils/receiptImages');
 
 // ─── Tipi MIME accettati ───────────────────────────────────────────────────────
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
@@ -133,21 +136,44 @@ async function verifyStoreAddress(storeChain, storeAddress, userLoc) {
 // resto della pipeline OCR (pensata per un'unica immagine) non cambia.
 // Le foto vengono allineate alla larghezza della più stretta e impilate
 // nell'ordine in cui l'utente le ha scattate/selezionate.
-async function combineReceiptPhotos(files) {
-  if (files.length === 1) {
-    return `data:${files[0].mimetype};base64,${files[0].buffer.toString('base64')}`;
-  }
+// Ogni foto passa da Jimp anche se è una sola: Jimp applica l'orientamento
+// EXIF ai pixel (non tutti i motori OCR/vision lo leggono) e poi la rotazione
+// scelta dall'utente nell'anteprima (gradi in senso orario, multipli di 90).
+async function combineReceiptPhotos(files, rotations = []) {
   const Jimp = require('jimp');
-  const images = await Promise.all(files.map(f => Jimp.read(f.buffer)));
+  const images = await Promise.all(files.map(async (f, i) => {
+    const im = await Jimp.read(f.buffer);
+    const deg = (((Number(rotations[i]) || 0) % 360) + 360) % 360;
+    // Jimp ruota in senso antiorario: 360-deg = deg in senso orario.
+    if (deg % 90 === 0 && deg !== 0) im.rotate(360 - deg);
+    return im;
+  }));
+  if (images.length === 1) {
+    const buffer = await images[0].quality(85).getBufferAsync(Jimp.MIME_JPEG);
+    return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+  }
   const width = Math.min(...images.map(im => im.bitmap.width));
   const resized = images.map(im => im.clone().resize(width, Jimp.AUTO));
-  const totalHeight = resized.reduce((sum, im) => sum + im.bitmap.height, 0);
+  // Fascia scura con "=== FOTO N ===" tra una foto e l'altra: le foto di uno
+  // scontrino lungo si sovrappongono, e senza un confine visibile l'AI
+  // contava due volte le righe ripetute. Il prompt (receipt.prompts, regola 9)
+  // spiega che intorno alla fascia i prodotti ripetuti vanno presi una volta.
+  const BAND = 70;
+  const font = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE).catch(() => null);
+  const totalHeight = resized.reduce((sum, im) => sum + im.bitmap.height, 0) + BAND * (resized.length - 1);
   const combined = new Jimp(width, totalHeight, 0xffffffff);
   let y = 0;
-  for (const im of resized) {
+  resized.forEach((im, i) => {
+    if (i > 0) {
+      combined.composite(new Jimp(width, BAND, 0x222222ff), 0, y);
+      if (font) {
+        combined.print(font, 20, y + 18, `=== FOTO ${i + 1} (continuazione) ===`);
+      }
+      y += BAND;
+    }
     combined.composite(im, 0, y);
     y += im.bitmap.height;
-  }
+  });
   const buffer = await combined.quality(85).getBufferAsync(Jimp.MIME_JPEG);
   return `data:image/jpeg;base64,${buffer.toString('base64')}`;
 }
@@ -176,9 +202,12 @@ async function scanReceipt(req, res) {
 
   // 1. Se sono più foto (scontrino diviso in 2-3 scatti), ricomponile in una
   // sola immagine verticale PRIMA di passarla all'OCR.
+  let rotations = [];
+  try { rotations = JSON.parse(req.body?.rotations || '[]'); } catch { rotations = []; }
+  if (!Array.isArray(rotations)) rotations = [];
   let imageBase64;
   try {
-    imageBase64 = await combineReceiptPhotos(files);
+    imageBase64 = await combineReceiptPhotos(files, rotations);
   } catch (e) {
     console.warn('[receipt] combineReceiptPhotos fallito, uso solo la prima foto:', e.message);
     imageBase64 = `data:${files[0].mimetype};base64,${files[0].buffer.toString('base64')}`;
@@ -330,14 +359,28 @@ async function scanReceipt(req, res) {
     }
   }
 
+  // 4-bis. Foto (quella letta dall'AI: già raddrizzata/unita) salvata sul
+  // server per lo storico scontrini. Best-effort: se il disco fallisce lo
+  // scontrino si salva comunque, solo senza foto.
+  const imageSaved = await saveReceiptImage(req.userId, receipt.id, imageBase64)
+    .then(() => true)
+    .catch(e => { console.warn('[receipt] salvataggio foto fallito:', e.message); return false; });
+
   let updated;
 
   try {
     updated = await prisma.$transaction(async tx => {
+      // Duplicato: prima i prodotti della nuova lettura si AGGIUNGEVANO a
+      // quelli già salvati, raddoppiando le righe dello scontrino esistente.
+      if (isDuplicate) {
+        await tx.receiptItem.deleteMany({ where: { receiptId: receipt.id } });
+      }
+
       // 4a. Aggiorna Receipt con i dati estratti
       await tx.receipt.update({
         where: { id: receipt.id },
         data: {
+          ...(imageSaved ? { imageUrl: `/api/receipts/${receipt.id}/image` } : {}),
           storeName:     parsed.storeName    ?? null,
           storeChain:    parsed.storeChain   ?? null,
           storeAddress:  parsed.storeAddress ?? null,
@@ -375,6 +418,7 @@ async function scanReceipt(req, res) {
     });
   } catch (txErr) {
     console.error('[receipt] transaction error:', txErr.message);
+    if (imageSaved && !isDuplicate) deleteReceiptImage(req.userId, receipt.id).catch(() => {});
     await prisma.receipt.update({
       where: { id: receipt.id },
       data:  { status: 'error' },
@@ -538,7 +582,24 @@ async function deleteReceipt(req, res) {
   }
   // onDelete: Cascade elimina anche i ReceiptItem associati
   await prisma.receipt.delete({ where: { id: req.params.id } });
+  await deleteReceiptImage(req.userId, req.params.id).catch(() => {});
   return success(res, { message: 'Scontrino eliminato' });
+}
+
+// ─── GET /api/receipts/:id/image ─────────────────────────────────────────────
+// Foto dello scontrino salvata sul server: solo il proprietario può vederla.
+async function getReceiptImage(req, res) {
+  const receipt = await prisma.receipt.findUnique({
+    where:  { id: req.params.id },
+    select: { userId: true, imageUrl: true },
+  });
+  if (!receipt || receipt.userId !== req.userId || !receipt.imageUrl) {
+    return error(res, 'Foto non disponibile', 404);
+  }
+  res.set('Cache-Control', 'private, max-age=86400');
+  return res.sendFile(receiptImagePath(req.userId, req.params.id), err => {
+    if (err && !res.headersSent) error(res, 'Foto non disponibile', 404);
+  });
 }
 
 // ─── PATCH /api/receipts/:id/address ─────────────────────────────────────────
@@ -630,4 +691,4 @@ async function exportReceiptsExcel(req, res) {
   }
 }
 
-module.exports = { scanReceipt, getReceipts, getReceiptById, deleteReceipt, updateReceiptAddress, getReceiptStats, exportReceiptsExcel };
+module.exports = { scanReceipt, getReceipts, getReceiptById, getReceiptImage, deleteReceipt, updateReceiptAddress, getReceiptStats, exportReceiptsExcel };

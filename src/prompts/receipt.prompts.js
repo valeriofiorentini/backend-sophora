@@ -168,6 +168,7 @@ REGOLE:
 
 9. TOTALI: "totalAmount" = numero accanto a "TOTALE COMPLESSIVO". "totalDiscount" = somma di tutti gli sconti (articolo + globali tipo "SCONTO 10%").
    MARCATORE "=== PARTE 2 ===": separa due metà della stessa foto — intorno al marcatore includi ogni prodotto UNA sola volta. Altrove i duplicati sono VERI (es. due righe "GRANAROLO STRACCHINO 2,19" = 2 prodotti distinti).
+   MARCATORE "=== FOTO 2 ===" (o FOTO 3), su una fascia scura: l'utente ha fotografato lo stesso scontrino in più foto e le foto si sovrappongono. Le righe SUBITO PRIMA e SUBITO DOPO la fascia sono spesso LE STESSE ripetute (fine della foto precedente = inizio della successiva): confronta le ultime righe prima della fascia con le prime dopo e includi ogni prodotto ripetuto UNA sola volta. Anche intestazione e totale possono ripetersi: prendili una volta. Lontano dalla fascia i duplicati restano VERI.
 
 10. Includi TUTTI i prodotti con prezzo (anche buste/sacchetti). Non saltarne nessuno.
 

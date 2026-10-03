@@ -82,7 +82,7 @@ function isTransientOcrError(e) {
  * (429/5xx/timeout upstream) — prima causavano un 500 immediato all'utente
  * anche se bastava riprovare pochi secondi dopo.
  */
-async function callOcrApi(model, messages, attempt = 0) {
+async function callOcrApi(model, messages, attempt = 0, budget = null) {
   try {
     return await openai.chat.completions.create({
       model,
@@ -94,18 +94,29 @@ async function callOcrApi(model, messages, attempt = 0) {
       temperature: 0,
       store: false,   // GDPR: Zero Data Retention
       user: 'shopora-receipt-ocr',
-      timeout: 45000,
+      timeout: callTimeout(budget),
     });
   } catch (e) {
-    if (attempt < 2 && isTransientOcrError(e)) {
+    if (attempt < 2 && isTransientOcrError(e) && canStartCall(budget)) {
       const delay = 800 * Math.pow(2, attempt);
       console.warn(`[receipt] OCR ${model} errore transitorio (${e.message}) → retry tra ${delay}ms`);
       await sleep(delay);
-      return callOcrApi(model, messages, attempt + 1);
+      return callOcrApi(model, messages, attempt + 1, budget);
     }
     throw e;
   }
 }
+
+// Tempo massimo per scansione (budget = { deadline }): prima uno scontrino
+// difficile poteva fare 3 letture in fila da 45s l'una e l'app smetteva di
+// aspettare dopo 60s ("la connessione ha impiegato troppo tempo"). Ora un
+// nuovo tentativo parte solo se resta abbastanza tempo; altrimenti si tiene
+// la lettura migliore ottenuta finora (l'avviso "la somma non torna" la segnala).
+const MIN_CALL_MS = 20000;
+const canStartCall = budget => !budget || budget.deadline - Date.now() >= MIN_CALL_MS;
+const callTimeout = budget => (budget
+  ? Math.max(15000, Math.min(45000, budget.deadline - Date.now()))
+  : 45000);
 
 // ─── OCR dedicato (OCR.space) → testo esatto ──────────────────────────────────
 async function ocrSpaceText(imageBase64) {
@@ -269,24 +280,30 @@ function mergeAttempts(attempts) {
  * `hintText`: messaggio di correzione da aggiungere quando serve un secondo/
  * terzo parere in continuazione della conversazione.
  */
-async function consensusOcr(baseMessages, hintText, models) {
+async function consensusOcr(baseMessages, hintText, models, budget = null) {
   const [modelA, modelB, modelC] = models;
   const attempts = [];
+  const best = () => attempts.reduce((a, b) => (b.diff < a.diff ? b : a)).parsed;
 
   // Tentativo 1
   let model = modelA;
   let resp;
   try {
-    resp = await callOcrApi(model, baseMessages);
+    resp = await callOcrApi(model, baseMessages, 0, budget);
   } catch (e) {
+    if (!canStartCall(budget)) throw e;
     console.warn(`[receipt] consensus: modello primario ${model} fallito (${e.message}) → ${modelB}`);
     model = modelB;
-    resp = await callOcrApi(model, baseMessages);
+    resp = await callOcrApi(model, baseMessages, 0, budget);
   }
   let rawContent = resp.choices[0].message.content;
   let parsed = parseOcrJson(rawContent);
   attempts.push({ parsed, model, diff: diffRatio(parsed) });
   if (attempts[0].diff <= MISMATCH_THRESHOLD) return parsed;
+  if (!canStartCall(budget)) {
+    console.warn('[receipt] consensus: tempo massimo quasi esaurito → tengo il tentativo 1');
+    return parsed;
+  }
 
   // Tentativo 2: secondo parere, in continuazione con hint di correzione
   const secondModel = model === modelB ? modelA : modelB;
@@ -296,12 +313,16 @@ async function consensusOcr(baseMessages, hintText, models) {
       ...baseMessages,
       { role: 'assistant', content: rawContent },
       { role: 'user', content: hintText },
-    ]);
+    ], 0, budget);
     const parsed2 = parseOcrJson(resp2.choices[0].message.content);
     attempts.push({ parsed: parsed2, model: secondModel, diff: diffRatio(parsed2) });
     if (attempts[1].diff <= MISMATCH_THRESHOLD) return parsed2;
   } catch (e) {
     console.warn(`[receipt] consensus: tentativo 2 (${secondModel}) fallito: ${e.message}`);
+  }
+  if (!canStartCall(budget)) {
+    console.warn('[receipt] consensus: tempo massimo quasi esaurito → tengo il tentativo migliore');
+    return best();
   }
 
   // Tentativo 3: terzo modello, lettura INDIPENDENTE (non continuazione, per
@@ -309,7 +330,7 @@ async function consensusOcr(baseMessages, hintText, models) {
   // famiglia diversa dai primi due.
   console.warn(`[receipt] consensus: tentativo 2 non torna → tentativo 3 con ${modelC} (lettura indipendente)`);
   try {
-    const resp3 = await callOcrApi(modelC, baseMessages);
+    const resp3 = await callOcrApi(modelC, baseMessages, 0, budget);
     const parsed3 = parseOcrJson(resp3.choices[0].message.content);
     attempts.push({ parsed: parsed3, model: modelC, diff: diffRatio(parsed3) });
     if (attempts[attempts.length - 1].diff <= MISMATCH_THRESHOLD) return parsed3;
@@ -323,7 +344,7 @@ async function consensusOcr(baseMessages, hintText, models) {
 
 // Pipeline ibrida: OCR testo → testo+immagine all'LLM. Ritorna il JSON parsato,
 // o null se il provider è "vision" oppure OCR non disponibile.
-async function tryOcrSpacePipeline(imageBase64) {
+async function tryOcrSpacePipeline(imageBase64, budget = null) {
   if ((process.env.OCR_PROVIDER || '').toLowerCase() === 'vision') {
     console.info('[receipt] OCR_PROVIDER=vision → vision OCR diretto');
     return null;
@@ -379,6 +400,7 @@ ${text}
       messages,
       'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto oppure hai letto male un prezzo nella colonna PREZZO(€) (occhio a cifre confondibili come 9/6, 8/6, 1/4). Rileggi TUTTE le righe usando sia il testo OCR che l\'immagine, e restituisci il JSON corretto e completo.',
       [OCR_MODEL_ACCURATE, OCR_MODEL_FALLBACK, OCR_MODEL_THIRD],
+      budget,
     );
   } catch (e) {
     console.warn('[receipt] pipeline ibrida fallita → fallback vision puro:', e.message);
@@ -411,7 +433,7 @@ function dedupeSeamItems(topItems, botItems) {
 }
 
 /** Un solo tentativo (con un fallback di modello) su UNA metà dell'immagine. */
-async function visionOcrHalf(imageB64, isTop, [modelA, modelB]) {
+async function visionOcrHalf(imageB64, isTop, [modelA, modelB], budget = null) {
   const prompt = `${RECEIPT_PROMPT}
 
 ATTENZIONE — QUESTA È SOLO UNA PORZIONE: questa immagine è la ${isTop ? 'METÀ SUPERIORE' : 'METÀ INFERIORE'} di uno scontrino lungo, fotografato/diviso in due parti che si sovrappongono leggermente al centro. Estrai SOLO i prodotti effettivamente visibili in QUESTA porzione. Se l'intestazione (negozio, indirizzo, data) o il totale finale non sono visibili qui, lasciali null: verranno presi dall'altra metà.`;
@@ -423,11 +445,12 @@ ATTENZIONE — QUESTA È SOLO UNA PORZIONE: questa immagine è la ${isTop ? 'MET
     ],
   }];
   try {
-    const resp = await callOcrApi(modelA, messages);
+    const resp = await callOcrApi(modelA, messages, 0, budget);
     return parseOcrJson(resp.choices[0].message.content);
   } catch (e) {
+    if (!canStartCall(budget)) throw e;
     console.warn(`[receipt] vision split (${isTop ? 'alto' : 'basso'}) modello primario fallito (${e.message}) → fallback`);
-    const resp = await callOcrApi(modelB, messages);
+    const resp = await callOcrApi(modelB, messages, 0, budget);
     return parseOcrJson(resp.choices[0].message.content);
   }
 }
@@ -442,7 +465,8 @@ ATTENZIONE — QUESTA È SOLO UNA PORZIONE: questa immagine è la ${isTop ? 'MET
  * totali), NON il consensus a 3 modelli — che qui costerebbe fino a 6
  * chiamate aggiuntive sopra a quelle già tentate dalla pipeline ibrida.
  */
-async function runVisionSplitOcr(imageBase64, models) {
+async function runVisionSplitOcr(imageBase64, models, budget = null) {
+  if (!canStartCall(budget)) return null;
   const halves = await splitTallImage(imageBase64).catch(e => {
     console.warn('[receipt] split immagine (vision) fallito:', e.message);
     return null;
@@ -451,8 +475,8 @@ async function runVisionSplitOcr(imageBase64, models) {
 
   console.info('[receipt] scontrino lungo → vision pura in 2 metà');
   const [top, bot] = await Promise.all([
-    visionOcrHalf(halves[0], true, models).catch(e => { console.warn('[receipt] vision split alto fallita:', e.message); return null; }),
-    visionOcrHalf(halves[1], false, models).catch(e => { console.warn('[receipt] vision split basso fallita:', e.message); return null; }),
+    visionOcrHalf(halves[0], true, models, budget).catch(e => { console.warn('[receipt] vision split alto fallita:', e.message); return null; }),
+    visionOcrHalf(halves[1], false, models, budget).catch(e => { console.warn('[receipt] vision split basso fallita:', e.message); return null; }),
   ]);
   if (!top && !bot) return null;
   if (!top) return bot;
@@ -479,16 +503,16 @@ async function runVisionSplitOcr(imageBase64, models) {
  * altrimenti singola immagine) con doppio modello e verifica somma.
  * Ritorna il JSON parsato dello scontrino, o lancia se ogni strategia fallisce.
  */
-async function runReceiptOcr(imageBase64) {
+async function runReceiptOcr(imageBase64, budget = null) {
   // ── PASSO 1: pipeline ibrida (testo OCR + immagine)
-  let parsed = await tryOcrSpacePipeline(imageBase64);
+  let parsed = await tryOcrSpacePipeline(imageBase64, budget);
   if (parsed) return parsed;
 
   const fineTunedModel = await getOcrModel(); // null = nessun fine-tuned disponibile
   const firstModel = fineTunedModel ?? OCR_MODEL_ACCURATE;
 
   // ── PASSO 2: vision pura — se l'immagine è lunga, dividi in 2 metà
-  const splitParsed = await runVisionSplitOcr(imageBase64, [firstModel, OCR_MODEL_FALLBACK])
+  const splitParsed = await runVisionSplitOcr(imageBase64, [firstModel, OCR_MODEL_FALLBACK], budget)
     .catch(e => { console.warn('[receipt] vision split fallita, uso immagine intera:', e.message); return null; });
 
   // Accetta subito lo split SOLO se riconcilia (somma righe ≈ totale) — prima
@@ -498,6 +522,10 @@ async function runReceiptOcr(imageBase64) {
   // sull'immagine intera (passo 3) come già succedeva per gli scontrini corti.
   const splitDiff = splitParsed ? diffRatio(splitParsed) : 1;
   if (splitParsed && splitDiff <= MISMATCH_THRESHOLD) return splitParsed;
+  if (splitParsed && !canStartCall(budget)) {
+    console.warn('[receipt] vision split non riconcilia ma il tempo massimo è quasi esaurito → uso lo split');
+    return splitParsed;
+  }
   if (splitParsed) {
     console.warn(`[receipt] vision split non riconcilia (diff=${(splitDiff * 100).toFixed(1)}%) → tentativo con consensus a 3 modelli su immagine intera`);
   }
@@ -515,6 +543,7 @@ async function runReceiptOcr(imageBase64) {
     messages,
     'La somma dei prezzi degli item non corrisponde al totalAmount. Probabilmente hai SALTATO una o più righe prodotto (controlla in particolare le sezioni "GASTRONOMIA - X,XX -" consecutive: ognuna è un prodotto distinto) oppure hai letto male un prezzo nella colonna PREZZO(€). Rileggi TUTTE le righe, includi ogni prodotto saltato, e restituisci il JSON corretto e completo.',
     [firstModel, OCR_MODEL_FALLBACK, OCR_MODEL_THIRD],
+    budget,
   );
 
   // Nessuno dei due percorsi riconcilia perfettamente: tieni il migliore dei

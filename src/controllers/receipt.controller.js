@@ -178,8 +178,68 @@ async function combineReceiptPhotos(files, rotations = []) {
   return `data:image/jpeg;base64,${buffer.toString('base64')}`;
 }
 
-// ─── POST /api/receipts/scan ───────────────────────────────────────────────────
+// ─── Scansione in background ──────────────────────────────────────────────────
+// Scontrini lunghi / più foto: tra OCR, consensus fino a 3 modelli e
+// riconciliazione si superano spesso i 60s — l'app (e il proxy HTTPS davanti
+// al server) chiudevano la connessione con "ci ha messo troppo". Con
+// ?async=1 si risponde subito con un jobId e l'app chiede il risultato a
+// GET /api/receipts/scan-jobs/:jobId. Senza ?async=1 (app vecchie) resta
+// tutto com'era. I job vivono in memoria (PM2 in fork, un solo processo):
+// dopo un riavvio del server il job non esiste più e l'app chiede di riprovare.
+const scanJobs = new Map(); // jobId → { userId, status, httpStatus, body, at }
+const SCAN_JOB_TTL_MS = 15 * 60 * 1000;
+
+function cleanupScanJobs() {
+  const now = Date.now();
+  for (const [id, job] of scanJobs) {
+    if (now - job.at > SCAN_JOB_TTL_MS) scanJobs.delete(id);
+  }
+}
+
 async function scanReceipt(req, res) {
+  if (req.query?.async !== '1') return scanReceiptCore(req, res);
+
+  cleanupScanJobs();
+  const jobId = require('crypto').randomUUID();
+  scanJobs.set(jobId, { userId: req.userId, status: 'processing', at: Date.now() });
+
+  // Stessa logica della scansione normale, ma la risposta viene catturata
+  // e salvata nel job invece di essere inviata subito.
+  const capture = {
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+  scanReceiptCore(req, capture)
+    .catch(e => {
+      console.error('[receipt] scansione in background fallita:', e.message);
+      capture.status(500).json({ success: false, message: 'Errore durante la lettura dello scontrino' });
+    })
+    .finally(() => {
+      scanJobs.set(jobId, {
+        userId: req.userId, status: 'done', httpStatus: capture.statusCode, body: capture.body, at: Date.now(),
+      });
+    });
+
+  return success(res, { jobId, status: 'processing' }, 202);
+}
+
+// ─── GET /api/receipts/scan-jobs/:jobId ──────────────────────────────────────
+async function getScanJob(req, res) {
+  const job = scanJobs.get(req.params.jobId);
+  if (!job || job.userId !== req.userId) {
+    return error(res, 'Scansione non trovata (il server potrebbe essere stato riavviato): riprova.', 404);
+  }
+  if (job.status === 'processing') return success(res, { status: 'processing' });
+  return success(res, { status: 'done', httpStatus: job.httpStatus, result: job.body });
+}
+
+// ─── POST /api/receipts/scan ───────────────────────────────────────────────────
+async function scanReceiptCore(req, res) {
+  // Tempo massimo per la lettura: le app che aspettano la risposta (senza
+  // ?async=1) chiudono dopo 60s compreso l'upload → 45s qui; in background
+  // nessuno aspetta la connessione, quindi si concede di più per i ricontrolli.
+  const budget = { deadline: Date.now() + (req.query?.async === '1' ? 180000 : 45000) };
   const files = req.files || (req.file ? [req.file] : []);
   if (files.length === 0) return error(res, 'Immagine scontrino obbligatoria');
 
@@ -228,7 +288,7 @@ async function scanReceipt(req, res) {
   // 3. OCR (pipeline completa nel service: ibrida → vision con doppio modello)
   let parsed;
   try {
-    parsed = await runReceiptOcr(imageBase64);
+    parsed = await runReceiptOcr(imageBase64, budget);
   } catch (ocrErr) {
     console.error('[receipt] OCR error:', ocrErr.message);
     await prisma.receipt.update({
@@ -691,4 +751,4 @@ async function exportReceiptsExcel(req, res) {
   }
 }
 
-module.exports = { scanReceipt, getReceipts, getReceiptById, getReceiptImage, deleteReceipt, updateReceiptAddress, getReceiptStats, exportReceiptsExcel };
+module.exports = { scanReceipt, getScanJob, getReceipts, getReceiptById, getReceiptImage, deleteReceipt, updateReceiptAddress, getReceiptStats, exportReceiptsExcel };

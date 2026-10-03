@@ -12,6 +12,7 @@ router.use(auth);
 // ricomposte in un'unica immagine prima dell'OCR (vedi receipt.controller).
 router.post('/scan',   receiptRateLimit, uploadReceiptImages('image', 3), asyncHandler(c.scanReceipt));
 router.get('/',        asyncHandler(c.getReceipts));
+router.get('/scan-jobs/:jobId', asyncHandler(c.getScanJob));
 router.get('/stats',          asyncHandler(c.getReceiptStats));
 router.post('/export/excel',  asyncHandler(c.exportReceiptsExcel));
 router.get('/:id',            asyncHandler(c.getReceiptById));

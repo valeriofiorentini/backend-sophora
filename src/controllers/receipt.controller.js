@@ -238,8 +238,10 @@ async function getScanJob(req, res) {
 async function scanReceiptCore(req, res) {
   // Tempo massimo per la lettura: le app che aspettano la risposta (senza
   // ?async=1) chiudono dopo 60s compreso l'upload → 45s qui; in background
-  // nessuno aspetta la connessione, quindi si concede di più per i ricontrolli.
-  const budget = { deadline: Date.now() + (req.query?.async === '1' ? 180000 : 45000) };
+  // nessuno aspetta la connessione: 4 minuti bastano per OCR testo (≤30s) +
+  // tutti e 3 i modelli (≤45s l'uno) + eventuali ritentativi. L'app attende
+  // fino a 5 minuti.
+  const budget = { deadline: Date.now() + (req.query?.async === '1' ? 240000 : 45000) };
   const files = req.files || (req.file ? [req.file] : []);
   if (files.length === 0) return error(res, 'Immagine scontrino obbligatoria');
 
